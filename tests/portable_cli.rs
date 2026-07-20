@@ -161,14 +161,21 @@ fn self_uninstall_removes_a_copied_binary_and_keeps_user_state() {
 fn self_uninstall_delegates_a_cargo_install_back_to_cargo() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temporary = TempDir::new().unwrap();
+    let built_lev = Path::new(env!("CARGO_BIN_EXE_lev"));
+    let temporary = tempfile::Builder::new()
+        .prefix("lev-cargo-uninstall-")
+        .tempdir_in(built_lev.parent().unwrap())
+        .unwrap();
     let cargo_home = temporary.path().join("cargo-home");
     let bin = cargo_home.join("bin");
     fs::create_dir_all(&bin).unwrap();
     fs::write(cargo_home.join(".crates2.json"), "{}").unwrap();
 
     let executable = bin.join("lev");
-    fs::copy(env!("CARGO_BIN_EXE_lev"), &executable).unwrap();
+    // A hard link behaves like Cargo's installed executable without creating
+    // a freshly written program file, which some Linux filesystems can reject
+    // with ETXTBSY when it is executed immediately.
+    fs::hard_link(built_lev, &executable).unwrap();
     let cargo = bin.join("cargo");
     fs::write(
         &cargo,
