@@ -1,0 +1,4 @@
+interface:
+  display_name: "lev"
+  short_description: "Use lev for Lean project workflows"
+  default_prompt: "Use $lev to sync, build, test, and diagnose this Lean project."

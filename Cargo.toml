@@ -1,0 +1,61 @@
+[package]
+name = "lev-cli"
+version = "1.0.0"
+authors = ["Robert Joseph George"]
+edition = "2024"
+description = "A uv-inspired Lean project, dependency, cache, and toolchain manager"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/robertboy18/lev"
+homepage = "https://robertboy18.github.io/lev/"
+documentation = "https://docs.rs/lev-cli"
+rust-version = "1.85"
+keywords = ["lean", "lake", "package-manager", "toolchain", "environment"]
+categories = ["command-line-utilities", "development-tools"]
+include = [
+    "/.github/**",
+    "/scripts/**",
+    "/src/**",
+    "/tests/**",
+    "/schemas/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
+    "/LICENSE-MIT",
+]
+
+[[bin]]
+name = "lev"
+path = "src/main.rs"
+
+[lib]
+name = "lev"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
+ed25519-dalek = { version = "2.2", features = ["rand_core"] }
+# FastCDC boundaries are stored in signed manifests. Keep this exact until a
+# deliberate format revision teaches old and new chunk layouts to coexist.
+fastcdc = "=4.0.1"
+fs2 = "0.4"
+glob = "0.3"
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tar = { version = "0.4", default-features = false }
+toml_edit = { version = "0.23", features = ["serde"] }
+ureq = { version = "3.3", default-features = false, features = ["rustls"] }
+zstd = { version = "0.13", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+atomicwrites = "0.4"
+
+[dev-dependencies]
+tempfile = "3.20"

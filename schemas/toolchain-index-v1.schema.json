@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "lev signed toolchain index v1",
+  "description": "Canonical catalog stored at toolchains-v1/index.json and authenticated by index.sig.",
+  "type": "object",
+  "required": [
+    "schema",
+    "signing_key_fingerprint",
+    "entries"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lev.toolchain-index/v1"
+    },
+    "signing_key_fingerprint": {
+      "$ref": "#/$defs/sha256"
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "toolchain",
+        "platform",
+        "manifest",
+        "manifest_sha256",
+        "logical_bytes",
+        "entries",
+        "files",
+        "unique_chunks"
+      ],
+      "properties": {
+        "toolchain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "manifest": {
+          "type": "string",
+          "pattern": "^toolchains-v1/manifests/[0-9a-f]{64}/[A-Za-z0-9._-]{1,128}\\.json$"
+        },
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "logical_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "entries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "unique_chunks": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

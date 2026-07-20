@@ -1,0 +1,101 @@
+name: Release binaries
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            binary: target/release/lev
+            archive: lev-linux-x86_64.tar.gz
+          - name: macos-arm64
+            os: macos-14
+            binary: target/release/lev
+            archive: lev-macos-arm64.tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            binary: target/release/lev.exe
+            archive: lev-windows-x86_64.zip
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+        env:
+          LEV_RELEASE_REPOSITORY: ${{ github.repository }}
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/stage
+          cp "${{ matrix.binary }}" dist/stage/lev
+          cp "${{ matrix.binary }}" "dist/lev-${{ matrix.name }}"
+          tar -C dist/stage -czf "dist/${{ matrix.archive }}" lev
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+            sha256sum "lev-${{ matrix.name }}" > "lev-${{ matrix.name }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+            shasum -a 256 "lev-${{ matrix.name }}" > "lev-${{ matrix.name }}.sha256"
+          fi
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "${{ matrix.binary }}" "dist/lev-${{ matrix.name }}.exe"
+          Compress-Archive -Path "${{ matrix.binary }}" -DestinationPath "dist/${{ matrix.archive }}"
+          $hash = (Get-FileHash "dist/${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.archive }}" | Out-File -Encoding ascii "dist/${{ matrix.archive }}.sha256"
+          $rawHash = (Get-FileHash "dist/lev-${{ matrix.name }}.exe" -Algorithm SHA256).Hash.ToLower()
+          "$rawHash  lev-${{ matrix.name }}.exe" | Out-File -Encoding ascii "dist/lev-${{ matrix.name }}.exe.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lev-${{ matrix.name }}
+          path: dist/lev-*
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify release tag matches Cargo version
+        shell: bash
+        run: |
+          package_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          test "$GITHUB_REF_NAME" = "v$package_version"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Render repository-specific installers
+        shell: bash
+        run: |
+          sed "s|@LEV_REPOSITORY@|${GITHUB_REPOSITORY}|g" scripts/install.sh > dist/lev-install.sh
+          sed "s|@LEV_REPOSITORY@|${GITHUB_REPOSITORY}|g" scripts/install.ps1 > dist/lev-install.ps1
+      - name: Publish archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          fi
+          find dist -maxdepth 1 -type f -print0 |
+            xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber

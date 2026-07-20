@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="A practical guide to lev, the uv-inspired project, dependency, cache, and toolchain manager for Lean."
+    >
+    <title>lev documentation</title>
+    <link rel="stylesheet" href="styles.css">
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to the guide</a>
+
+    <header class="topbar">
+      <a class="brand" href="#start" aria-label="lev documentation home">
+        <span class="brand-mark" aria-hidden="true">l</span>
+        <span>lev docs</span>
+      </a>
+
+      <button
+        class="nav-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="docs-nav"
+        data-nav-toggle
+      >
+        Contents
+      </button>
+
+      <nav class="top-links" aria-label="Related links">
+        <a href="https://github.com/robertboy18/lev#readme">README</a>
+        <a href="https://github.com/astral-sh/uv">uv</a>
+        <a href="https://lean-lang.org/">Lean</a>
+      </nav>
+    </header>
+
+    <button
+      class="nav-scrim"
+      type="button"
+      aria-label="Close contents"
+      data-nav-close
+    ></button>
+
+    <div class="docs-shell">
+      <aside
+        class="sidebar"
+        id="docs-nav"
+        aria-label="Documentation navigation"
+      >
+        <div class="sidebar-inner">
+          <label class="search-label" for="doc-search">Find a section</label>
+          <input
+            class="doc-search"
+            id="doc-search"
+            type="search"
+            placeholder="Filter the guide"
+            autocomplete="off"
+          >
+          <p class="search-empty" data-search-empty hidden>No matching section.</p>
+
+          <nav class="section-nav" aria-label="Documentation sections">
+            <div class="nav-group">
+              <p class="nav-group-title">Start</p>
+              <a href="#start" data-section-link>What lev is</a>
+              <a href="#setup" data-section-link>Five-minute setup</a>
+              <a href="#stack" data-section-link>How it fits</a>
+            </div>
+            <div class="nav-group">
+              <p class="nav-group-title">Workflows</p>
+              <a href="#daily-use" data-section-link>Daily use</a>
+              <a href="#toolchains" data-section-link>Toolchains</a>
+              <a href="#cache" data-section-link>Cache reuse</a>
+              <a href="#ml-benchmarking" data-section-link>ML benchmarking</a>
+              <a href="#formalization" data-section-link>Formalization</a>
+              <a href="#more-examples" data-section-link>More examples</a>
+            </div>
+            <div class="nav-group">
+              <p class="nav-group-title">Reference</p>
+              <a href="#comparison" data-section-link>elan, Lake, and lev</a>
+              <a href="#failure-boundaries" data-section-link>Failure boundaries</a>
+              <a href="#commands" data-section-link>Command map</a>
+              <a href="#agents" data-section-link>Coding agents</a>
+            </div>
+          </nav>
+        </div>
+      </aside>
+
+      <main id="main-content">
+        <section
+          class="doc-section intro"
+          id="start"
+          data-title="What lev is overview uv project dependency cache toolchain"
+        >
+          <p class="section-kicker">Documentation</p>
+          <h1>lev</h1>
+          <p class="lead">
+            A <a href="https://github.com/astral-sh/uv">uv-inspired</a> project,
+            dependency, cache, and toolchain manager for Lean.
+          </p>
+          <p>
+            lev is for the point where one Lean checkout turns into several.
+            It keeps each project's normal Lean and Lake files, then coordinates
+            toolchains, locked environments, shared Git data, and compatible
+            build artifacts around them.
+          </p>
+
+          <dl class="quick-facts">
+            <div>
+              <dt>Project format</dt>
+              <dd>Standard Lake files</dd>
+            </div>
+            <div>
+              <dt>Build engine</dt>
+              <dd>Lake</dd>
+            </div>
+            <div>
+              <dt>Best fit</dt>
+              <dd>Several Lean environments</dd>
+            </div>
+          </dl>
+
+          <aside class="note" aria-label="When lev helps">
+            <strong>One project is fine without lev.</strong>
+            If elan and Lake already make your workflow painless, keep using
+            them. lev is useful when setup and cache state have to stay
+            consistent across projects, worktrees, CI jobs, or benchmarks.
+          </aside>
+        </section>
+
+        <section
+          class="doc-section"
+          id="setup"
+          data-title="Five-minute setup install existing new project cargo sync build"
+        >
+          <p class="section-kicker">Start here</p>
+          <h2>Five-minute setup</h2>
+
+          <h3>Install lev</h3>
+          <div class="command-block">
+            <div class="command-label">Terminal</div>
+            <pre><code>cargo install --git https://github.com/Robertboy18/lev --locked lev-cli
+lev --version
+lev doctor</code></pre>
+          </div>
+          <p>
+            To remove it later, run
+            <code>lev self uninstall --dry-run</code> to preview the exact
+            executable, then <code>lev self uninstall</code>. Cargo installs
+            are handed back to Cargo, and lev keeps your cache and toolchain
+            data.
+          </p>
+
+          <div class="path-grid">
+            <article class="setup-path">
+              <p class="path-number">01</p>
+              <h3>Use an existing project</h3>
+              <p>
+                No conversion step. Run lev beside the Lake files that are
+                already there.
+              </p>
+              <div class="command-block">
+                <div class="command-label">Existing checkout</div>
+                <pre><code>cd my-lean-project
+lev sync
+lev build</code></pre>
+              </div>
+            </article>
+
+            <article class="setup-path">
+              <p class="path-number">02</p>
+              <h3>Start a project</h3>
+              <p>
+                Any toolchain selector supported by the configured source can
+                be used. There is no release list compiled into lev.
+              </p>
+              <div class="command-block">
+                <div class="command-label">New checkout</div>
+                <pre><code>lev init theorem-playground --lean stable
+cd theorem-playground
+lev build</code></pre>
+              </div>
+            </article>
+          </div>
+
+          <p>
+            There is nothing to activate. <code>lev run</code> prepares the
+            selected environment and starts the command inside it.
+          </p>
+        </section>
+
+        <section
+          class="doc-section"
+          id="stack"
+          data-title="How lev fits elan Lake Lean stack architecture diagram"
+        >
+          <p class="section-kicker">Architecture</p>
+          <h2>How it fits</h2>
+          <p>
+            lev coordinates existing tools; it is not another Lean compiler or
+            a private package ecosystem.
+          </p>
+
+          <figure class="diagram stack-diagram">
+            <figcaption>One command, with the normal Lean stack underneath</figcaption>
+            <div class="stack-stage">
+              <div class="diagram-node node-user">
+                <strong>You, CI, or a benchmark runner</strong>
+                <span><code>lev build</code></span>
+              </div>
+              <div class="diagram-connector vertical" aria-hidden="true"></div>
+              <div class="diagram-node node-lev">
+                <strong>lev</strong>
+                <span>lock, sync, select, cache, run</span>
+              </div>
+              <div class="diagram-connector vertical split" aria-hidden="true"></div>
+              <div class="stack-pair">
+                <div class="diagram-node node-upstream">
+                  <strong>elan or lev's store</strong>
+                  <span>obtain the toolchain</span>
+                </div>
+                <div class="diagram-node node-upstream">
+                  <strong>Lake</strong>
+                  <span>resolve and build</span>
+                </div>
+              </div>
+              <div class="diagram-connector vertical" aria-hidden="true"></div>
+              <div class="diagram-node node-output">
+                <strong>Lean compiler + ordinary project files</strong>
+                <span>the same files still work without lev</span>
+              </div>
+            </div>
+          </figure>
+
+          <p>
+            <code>lean-toolchain</code>, the Lakefile, and
+            <code>lake-manifest.json</code> remain authoritative.
+            <code>lev.lock</code> records extra integrity and environment data;
+            it does not replace Lake's manifest.
+          </p>
+        </section>
+
+        <section
+          class="doc-section"
+          id="daily-use"
+          data-title="Daily use build test run sync lock workflow commands"
+        >
+          <p class="section-kicker">Normal work</p>
+          <h2>Daily use</h2>
+          <p>
+            The short commands do the preflight first, then hand control to
+            Lake or the requested process.
+          </p>
+
+          <figure class="diagram pipeline-diagram">
+            <figcaption>What happens before a build starts</figcaption>
+            <ol class="pipeline">
+              <li>
+                <span class="step-index">1</span>
+                <strong>Select</strong>
+                <small>toolchain and lock</small>
+              </li>
+              <li>
+                <span class="step-index">2</span>
+                <strong>Sync</strong>
+                <small>exact dependencies</small>
+              </li>
+              <li>
+                <span class="step-index">3</span>
+                <strong>Attach</strong>
+                <small>compatible cache</small>
+              </li>
+              <li>
+                <span class="step-index">4</span>
+                <strong>Run</strong>
+                <small>Lake or your command</small>
+              </li>
+            </ol>
+          </figure>
+
+          <div class="command-block">
+            <div class="command-label">Common commands</div>
+            <pre><code>lev sync
+lev build
+lev test
+lev run lean --version
+lev run lake env my-tool</code></pre>
+          </div>
+
+          <p>
+            Use <code>--offline</code> when a run must not touch the network.
+            Use <code>--frozen</code> when configuration, manifest, platform,
+            and toolchain drift should be an error too.
+          </p>
+          <div class="command-block">
+            <div class="command-label">Reproducible run</div>
+            <pre><code>lev lock --check
+lev sync --frozen
+lev build --offline</code></pre>
+          </div>
+        </section>
+
+        <section
+          class="doc-section"
+          id="toolchains"
+          data-title="Toolchains versions switch lock use pin arbitrary releases channels nightly"
+        >
+          <p class="section-kicker">Several environments</p>
+          <h2>Switch toolchains without flattening your workspace</h2>
+          <p>
+            A project can retain more than one resolved environment. Each one
+            gets its own manifest and workspace, so returning to an earlier
+            selection does not ask one build directory to become two
+            incompatible things.
+          </p>
+
+          <div class="command-block">
+            <div class="command-label">Resolve and revisit environments</div>
+            <pre><code>lev lock --lean "$PAPER_TOOLCHAIN" --lean "$CURRENT_TOOLCHAIN"
+lev build --lean "$PAPER_TOOLCHAIN"
+lev build --lean "$CURRENT_TOOLCHAIN"
+lev build --lean "$PAPER_TOOLCHAIN"</code></pre>
+          </div>
+
+          <figure class="diagram environment-diagram">
+            <figcaption>Switching selects an environment; it does not overwrite the other one</figcaption>
+            <div class="environment-stage">
+              <div class="environment-inputs">
+                <div class="diagram-node node-paper">
+                  <strong>paper toolchain</strong>
+                  <span>its manifest + workspace</span>
+                </div>
+                <div class="diagram-node node-current">
+                  <strong>current toolchain</strong>
+                  <span>its manifest + workspace</span>
+                </div>
+              </div>
+              <div class="diagram-connector horizontal" aria-hidden="true"></div>
+              <div class="diagram-node node-lev compact">
+                <strong>lev selects one</strong>
+                <span>the other stays intact</span>
+              </div>
+              <div class="diagram-connector horizontal" aria-hidden="true"></div>
+              <div class="environment-outputs">
+                <div class="diagram-node node-output">
+                  <strong>active run</strong>
+                  <span>matching Lean + Lake</span>
+                </div>
+                <div class="diagram-node node-storage">
+                  <strong>shared storage</strong>
+                  <span>only compatible data is reused</span>
+                </div>
+              </div>
+            </div>
+          </figure>
+
+          <p>
+            <code>lev use "$TOOLCHAIN"</code> makes a resolved environment the
+            project default. Passing <code>--lean "$TOOLCHAIN"</code> selects
+            one run without changing <code>lean-toolchain</code>.
+          </p>
+        </section>
+
+        <section
+          class="doc-section"
+          id="cache"
+          data-title="Cache reuse Git objects artifacts workspaces local performance guarantees"
+        >
+          <p class="section-kicker">Reuse</p>
+          <h2>Share the expensive parts, isolate the risky parts</h2>
+          <p>
+            Repositories can share immutable Git objects and Lake artifacts
+            that match exactly. Their source trees, manifests, and active build
+            workspaces remain separate.
+          </p>
+
+          <figure class="diagram cache-diagram">
+            <figcaption>Three checkouts using the same lev storage</figcaption>
+            <div class="cache-stage">
+              <div class="cache-projects">
+                <div class="diagram-node node-paper"><strong>proof main</strong></div>
+                <div class="diagram-node node-current"><strong>review worktree</strong></div>
+                <div class="diagram-node node-user"><strong>evaluation repo</strong></div>
+              </div>
+              <div class="cache-lines" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>
+              <div class="cache-stores">
+                <div class="diagram-node node-storage">
+                  <strong>Git object store</strong>
+                  <span>exact locked revisions</span>
+                </div>
+                <div class="diagram-node node-storage">
+                  <strong>Lake artifact cache</strong>
+                  <span>namespaced by toolchain</span>
+                </div>
+              </div>
+            </div>
+          </figure>
+
+          <div class="boundary-grid">
+            <div>
+              <h3>What lev guarantees</h3>
+              <ul class="check-list">
+                <li>Different toolchains do not share an artifact namespace.</li>
+                <li>Frozen and offline modes validate before running.</li>
+                <li>Cache deletion is a dry run unless <code>--apply</code> is present.</li>
+              </ul>
+            </div>
+            <div>
+              <h3>What it cannot promise</h3>
+              <ul class="plain-list">
+                <li>The first build is still cold.</li>
+                <li>Changed source or options can require compilation.</li>
+                <li>An incompatible project does not become compatible by switching Lean.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="command-block">
+            <div class="command-label">Inspect and maintain storage</div>
+            <pre><code>lev cache status
+lev cache verify --full
+lev cache gc --max-age-days 7
+lev cache gc --max-age-days 7 --apply
+lev --local build</code></pre>
+          </div>
+
+          <aside class="note note-warm" aria-label="Cache speed boundary">
+            <strong>Where the speed comes from:</strong>
+            Lake is the artifact-cache engine. lev configures and namespaces
+            that cache consistently, then combines it with shared Git state,
+            locks, and lifecycle commands. A manually configured warm Lake
+            cache can be just as fast for an identical build.
+          </aside>
+        </section>
+
+        <section
+          class="doc-section"
+          id="ml-benchmarking"
+          data-title="Machine learning ML benchmarking LLM miniF2F papers evaluation reproducibility"
+        >
+          <p class="section-kicker">Machine learning benchmarking</p>
+          <h2>Keep the full benchmark environment together</h2>
+          <p>
+            This is personal: I was testing an LLM on
+            <a href="https://github.com/openai/miniF2F">miniF2F</a>, and the
+            version question kept getting in the way. Different papers used
+            different Lean, Mathlib, project, and REPL snapshots. I would move
+            to another baseline, work out the matching set again, and wait for
+            another checkout to rebuild things I had already built.
+          </p>
+          <p>
+            lev treats that matched set as the useful unit. Each repository can
+            keep the versions it actually expects, while compatible objects
+            and artifacts are available to the next run.
+          </p>
+
+          <figure class="diagram benchmark-diagram">
+            <figcaption>Compare runs without pretending their source environments are interchangeable</figcaption>
+            <div class="benchmark-stage">
+              <div class="benchmark-lane lane-paper">
+                <strong>Paper baseline</strong>
+                <span>its toolchain</span>
+                <span>its Mathlib + REPL revisions</span>
+                <span>same evaluation protocol</span>
+              </div>
+              <div class="benchmark-result">
+                <span>lev run</span>
+                <strong>results</strong>
+                <small>lock identifies environment</small>
+              </div>
+              <div class="benchmark-lane lane-current">
+                <strong>Current model</strong>
+                <span>its toolchain</span>
+                <span>its Mathlib + REPL revisions</span>
+                <span>same evaluation protocol</span>
+              </div>
+            </div>
+          </figure>
+
+          <div class="command-block">
+            <div class="command-label">Two frozen project checkouts</div>
+            <pre><code>cd paper-baseline
+lev sync --locked
+lev build
+lev run python evaluate.py
+
+cd ../current-baseline
+lev sync --locked
+lev build
+lev run python evaluate.py</code></pre>
+          </div>
+
+          <p>
+            If one checkout genuinely supports several Lean environments, lock
+            them there and select each run with <code>--lean</code>. If the
+            source differs between papers, keep separate checkouts. lev can
+            reuse matching data across them without mixing their locks.
+          </p>
+        </section>
+
+        <section
+          class="doc-section"
+          id="formalization"
+          data-title="Formalization theorem proof worktrees branches review offline"
+        >
+          <p class="section-kicker">Formalization workflows</p>
+          <h2>Move between proofs without repeating setup</h2>
+          <p>
+            A main theorem checkout, a review worktree, and an older release
+            branch can all be ordinary Lake projects. lev gives them the same
+            cache policy and lets matching revisions reuse work.
+          </p>
+
+          <div class="command-block">
+            <div class="command-label">Two worktrees</div>
+            <pre><code>cd theorem-main
+lev build
+
+cd ../theorem-review
+lev build
+lev audit</code></pre>
+          </div>
+
+          <p>
+            The second build may reuse exact dependency objects and compatible
+            outputs. It still elaborates anything whose inputs changed.
+            <code>lev sync --frozen --offline</code> is a useful final check
+            when the environment should already be complete.
+          </p>
+        </section>
+
+        <section
+          class="doc-section"
+          id="more-examples"
+          data-title="More examples matrix CI workspace monorepo standalone Lean script signed remote cache SBOM audit"
+        >
+          <p class="section-kicker">Beyond one build</p>
+          <h2>More things lev can do</h2>
+          <p>
+            These use the same lock, toolchain, and cache machinery as
+            <code>lev build</code>. They are separate commands because each
+            solves a different workflow, not because they introduce another
+            project format.
+          </p>
+
+          <div class="example-list">
+            <article class="feature-example">
+              <div class="example-copy">
+                <p class="example-number">01 / Matrix</p>
+                <h3>Run the same check in isolated Lean environments</h3>
+                <p>
+                  The matrix preflights every selector and dependency
+                  environment before the first command starts. Each run gets a
+                  separate workspace, and the project's
+                  <code>lean-toolchain</code> file is left alone.
+                </p>
+              </div>
+
+              <div>
+                <div class="command-block">
+                  <div class="command-label">One-off matrix</div>
+                  <pre><code>lev matrix \
+  --lean "$PAPER_TOOLCHAIN" \
+  --lean "$CURRENT_TOOLCHAIN" \
+  --keep-going \
+  -- lake build --wfail</code></pre>
+                </div>
+
+                <div class="command-block">
+                  <div class="command-label">Save the matrix in lev.toml</div>
+                  <pre><code>lev matrix --init \
+  --lean "$PAPER_TOOLCHAIN" \
+  --lean "$CURRENT_TOOLCHAIN" \
+  -- lake build --wfail
+
+lev matrix --keep-going</code></pre>
+                </div>
+              </div>
+
+              <figure class="diagram matrix-diagram">
+                <figcaption>One source checkout, one command, isolated workspaces</figcaption>
+                <div class="matrix-stage">
+                  <div class="diagram-node node-lev">
+                    <strong>lev matrix</strong>
+                    <span>validate the complete plan</span>
+                  </div>
+                  <div class="matrix-fanout" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <div class="matrix-environments">
+                    <div class="diagram-node node-paper">
+                      <strong>paper toolchain</strong>
+                      <span>sync, then run command</span>
+                    </div>
+                    <div class="diagram-node node-current">
+                      <strong>current toolchain</strong>
+                      <span>sync, then run command</span>
+                    </div>
+                  </div>
+                </div>
+              </figure>
+            </article>
+
+            <article class="feature-example">
+              <div class="example-copy">
+                <p class="example-number">02 / Workspace</p>
+                <h3>Operate on every Lake project in a monorepo</h3>
+                <p>
+                  Members keep their own <code>lean-toolchain</code>, Lakefile,
+                  manifest, and lock. The aggregate workspace lock is published
+                  only after every selected member succeeds.
+                </p>
+              </div>
+
+              <div class="example-code-pair">
+                <div class="command-block">
+                  <div class="command-label">lev.toml</div>
+                  <pre><code>[workspace]
+members = ["packages/*"]
+exclude = ["packages/experimental"]</code></pre>
+                </div>
+                <div class="command-block">
+                  <div class="command-label">Workspace commands</div>
+                  <pre><code>lev workspace list
+lev workspace sync --locked
+lev workspace build --keep-going
+lev workspace lock --check</code></pre>
+                </div>
+              </div>
+            </article>
+
+            <article class="feature-example">
+              <div class="example-copy">
+                <p class="example-number">03 / Scripts</p>
+                <h3>Run one Lean file with its environment attached</h3>
+                <p>
+                  A standalone file can declare its toolchain and dependencies
+                  in a comment-delimited TOML block. lev caches the generated
+                  environment by metadata, so editing the Lean body does not
+                  rebuild unchanged dependencies.
+                </p>
+              </div>
+
+              <div class="example-code-pair">
+                <div class="command-block">
+                  <div class="command-label">Hello.lean</div>
+                  <pre><code>-- /// lev
+-- lean = "stable"
+-- ///
+
+def main : IO Unit :=
+  IO.println "hello from lev"</code></pre>
+                </div>
+                <div class="command-block">
+                  <div class="command-label">Run or elaborate</div>
+                  <pre><code>lev script run Hello.lean
+lev script check Hello.lean
+lev script run --offline Hello.lean</code></pre>
+                </div>
+              </div>
+            </article>
+
+            <article class="feature-example">
+              <div class="example-copy">
+                <p class="example-number">04 / Shared CI cache</p>
+                <h3>Move authenticated Lake artifacts between machines</h3>
+                <p>
+                  A directory, <code>file://</code> location, or HTTPS object
+                  host can store immutable compressed blobs and a signed
+                  snapshot manifest. Pulls verify the explicit public key,
+                  paths, signatures, and hashes before publishing anything
+                  locally.
+                </p>
+              </div>
+
+              <div>
+                <div class="command-block">
+                  <div class="command-label">Create a trust key once</div>
+                  <pre><code>lev cache remote keygen \
+  --private-key "$LEV_SIGNING_KEY" \
+  --public-key ./lev-cache.pub</code></pre>
+                </div>
+                <div class="command-block">
+                  <div class="command-label">Push in one job, pull in another</div>
+                  <pre><code>lev cache remote push "$CACHE_REMOTE" \
+  --signing-key "$LEV_SIGNING_KEY" \
+  --namespace team/project
+
+lev cache remote pull "$CACHE_REMOTE" \
+  --public-key ./lev-cache.pub \
+  --namespace team/project</code></pre>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <h3>Inspect what is actually locked</h3>
+          <p>
+            These are useful in CI or before publishing a reproducibility
+            bundle:
+          </p>
+          <div class="command-block">
+            <div class="command-label">Graph, integrity, and SBOM</div>
+            <pre><code>lev tree
+lev why PACKAGE
+lev audit --strict
+lev export --format cyclonedx --output project.cdx.json</code></pre>
+          </div>
+        </section>
+
+        <section
+          class="doc-section"
+          id="comparison"
+          data-title="Comparison elan Lake lev differences capabilities table"
+        >
+          <p class="section-kicker">Pick the smallest tool that solves the problem</p>
+          <h2>elan, Lake, and lev</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Need</th>
+                  <th scope="col">elan</th>
+                  <th scope="col">Lake</th>
+                  <th scope="col">lev</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Install or select Lean</th>
+                  <td>Yes</td>
+                  <td>No</td>
+                  <td>Store or elan fallback</td>
+                </tr>
+                <tr>
+                  <th scope="row">Resolve and build a package</th>
+                  <td>No</td>
+                  <td>Yes</td>
+                  <td>Delegates to Lake</td>
+                </tr>
+                <tr>
+                  <th scope="row">Share Lake artifacts</th>
+                  <td>No</td>
+                  <td>When configured</td>
+                  <td>Configured automatically</td>
+                </tr>
+                <tr>
+                  <th scope="row">Share dependency Git objects</th>
+                  <td>No</td>
+                  <td>No</td>
+                  <td>Yes</td>
+                </tr>
+                <tr>
+                  <th scope="row">Retain several project environments</th>
+                  <td>Toolchains only</td>
+                  <td>One active manifest</td>
+                  <td>Separate locks and workspaces</td>
+                </tr>
+                <tr>
+                  <th scope="row">Frozen full-environment check</th>
+                  <td>Toolchain</td>
+                  <td>Manifest</td>
+                  <td>Toolchain, platform, manifest, and checkouts</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p>
+            Use elan when you only need a compiler selector. Use Lake when you
+            only need to build one workspace. Add lev when the repeated work is
+            between environments.
+          </p>
+        </section>
+
+        <section
+          class="doc-section"
+          id="failure-boundaries"
+          data-title="Failure boundaries upstream Lake elan Lean compatibility breaks limitations"
+        >
+          <p class="section-kicker">Honest boundaries</p>
+          <h2>What happens when upstream breaks?</h2>
+
+          <div class="failure-list">
+            <article>
+              <h3>Lake breaks</h3>
+              <p>
+                Builds break too. lev does not reimplement Lake's build graph,
+                target logic, or compiler integration.
+              </p>
+            </article>
+            <article>
+              <h3>elan is unavailable</h3>
+              <p>
+                Verified toolchains already in lev's store can run directly.
+                Aliases and custom channels that need the elan fallback cannot.
+              </p>
+            </article>
+            <article>
+              <h3>A Lean upgrade breaks source</h3>
+              <p>
+                lev keeps the environments apart; it does not migrate proofs,
+                tactics, Mathlib code, or a version-specific REPL.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section
+          class="doc-section"
+          id="commands"
+          data-title="Command map reference init sync lock build run cache toolchain dependency add"
+        >
+          <p class="section-kicker">Reference</p>
+          <h2>Command map</h2>
+          <div class="command-map">
+            <div><code>lev init</code><span>Create a standard Lake project.</span></div>
+            <div><code>lev sync</code><span>Materialize the selected locked environment.</span></div>
+            <div><code>lev lock</code><span>Record or verify one or more environments.</span></div>
+            <div><code>lev build</code><span>Prepare the environment, then run Lake build.</span></div>
+            <div><code>lev run</code><span>Run any command in the selected environment.</span></div>
+            <div><code>lev add</code><span>Edit a declarative dependency transactionally.</span></div>
+            <div><code>lev toolchain</code><span>Install, inspect, or remove toolchains.</span></div>
+            <div><code>lev cache</code><span>Inspect, verify, or clean shared state.</span></div>
+            <div><code>lev doctor</code><span>Check Lean, Lake, Git, and cache setup.</span></div>
+            <div><code>lev audit</code><span>Check lock and checkout integrity.</span></div>
+            <div><code>lev matrix</code><span>Run one command across isolated toolchains.</span></div>
+            <div><code>lev workspace</code><span>Operate on a configured set of Lake projects.</span></div>
+            <div><code>lev script</code><span>Run one Lean file in a cached inline environment.</span></div>
+            <div><code>lev export</code><span>Write a dependency inventory or CycloneDX SBOM.</span></div>
+          </div>
+          <p>
+            Run <code>lev -h</code> for the everyday surface and
+            <code>lev --help</code> for every command.
+          </p>
+        </section>
+
+        <section
+          class="doc-section"
+          id="agents"
+          data-title="Coding agents Codex Claude skill instructions agents folder automation"
+        >
+          <p class="section-kicker">Agentic coding</p>
+          <h2>Using lev with your coding agent :)</h2>
+          <p>
+            Want Codex, Claude Code, or another coding agent to use lev too?
+            It is easy :) Point it at the <code>.agents</code> folder in the
+            repository. That folder includes an
+            <a
+              href="https://github.com/robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md"
+              >Agent Skill for lev</a
+            >.
+            It explains the normal sync, lock, build, offline, toolchain, and
+            cache workflow so the agent does not have to guess from whatever
+            happens to be installed globally.
+          </p>
+          <div class="command-block">
+            <div class="command-label">Tell your agent</div>
+            <pre><code>Read .agents/skills/lev/SKILL.md, then use lev for this project.</code></pre>
+          </div>
+          <p>
+            That is usually all you need to say. Agents that support Agent
+            Skills can discover it directly, and other agents can read the
+            Markdown file as ordinary project instructions. It is an easy way
+            to keep automated edits on the same reproducible path as a human
+            contributor.
+          </p>
+        </section>
+
+        <footer class="site-footer">
+          <p>Made by Robert Joseph George.</p>
+          <p>
+            MIT licensed. Read the full
+            <a href="https://github.com/robertboy18/lev#readme">README</a> or
+            <a href="https://github.com/robertboy18/lev/blob/main/LICENSE-MIT"
+              >license</a
+            >.
+          </p>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

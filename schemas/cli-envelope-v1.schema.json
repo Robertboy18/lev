@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "lev versioned CLI JSON envelope",
+  "description": "The common outer shape emitted by every lev command with --json.",
+  "type": "object",
+  "required": [
+    "schema",
+    "data"
+  ],
+  "properties": {
+    "schema": {
+      "description": "The command-specific compatibility contract.",
+      "enum": [
+        "lev.cli.audit/v1",
+        "lev.cli.cache.artifacts.gc/v1",
+        "lev.cli.cache.artifacts.status/v1",
+        "lev.cli.cache.artifacts.verify/v1",
+        "lev.cli.cache.remote.pull/v1",
+        "lev.cli.cache.remote.push/v1",
+        "lev.cli.deps/v1",
+        "lev.cli.outdated/v1",
+        "lev.cli.tool.list/v1",
+        "lev.cli.tool.gc/v1",
+        "lev.cli.toolchain.chunks.install/v1",
+        "lev.cli.toolchain.chunks.publish/v1",
+        "lev.cli.toolchain.gc/v1",
+        "lev.cli.toolchain.index.build/v1",
+        "lev.cli.toolchain.index.list/v1",
+        "lev.cli.toolchain.index.verify/v1",
+        "lev.cli.tree/v1",
+        "lev.cli.why/v1",
+        "lev.cli.workspace.list/v1"
+      ]
+    },
+    "data": {
+      "description": "The payload defined by the schema identifier."
+    }
+  },
+  "additionalProperties": false
+}
