@@ -12,6 +12,7 @@ pub(crate) mod schema {
     pub const OUTDATED: &str = "lev.cli.outdated/v1";
     pub const AUDIT: &str = "lev.cli.audit/v1";
     pub const DEPS: &str = "lev.cli.deps/v1";
+    pub const SHAKE: &str = "lev.cli.shake/v1";
     pub const TREE: &str = "lev.cli.tree/v1";
     pub const WHY: &str = "lev.cli.why/v1";
     pub const WORKSPACE_LIST: &str = "lev.cli.workspace.list/v1";
@@ -35,6 +36,7 @@ pub(crate) mod schema {
         OUTDATED,
         AUDIT,
         DEPS,
+        SHAKE,
         TREE,
         WHY,
         WORKSPACE_LIST,

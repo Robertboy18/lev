@@ -328,6 +328,76 @@ pub struct WorkflowArgs {
     pub args: Vec<OsString>,
 }
 
+#[derive(Debug, Args, Clone)]
+pub struct ShakeArgs {
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
+
+    /// Check for import drift without changing source files.
+    #[arg(long, conflicts_with = "fix")]
+    pub check: bool,
+
+    /// Apply suggestions, then rebuild and roll back if validation fails.
+    #[arg(long, visible_alias = "apply")]
+    pub fix: bool,
+
+    /// Keep independently verified edits when part of an applied batch fails.
+    #[arg(long, requires = "fix")]
+    pub isolate: bool,
+
+    /// Print a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Classify project files by import-analysis coverage.
+    #[arg(long)]
+    pub coverage: bool,
+
+    /// Do not automatically build stale modules before analysis.
+    #[arg(long)]
+    pub no_build: bool,
+
+    /// Analyze stale .olean files without Lake's freshness check.
+    #[arg(long)]
+    pub force: bool,
+
+    /// Preserve imports already implied by another import.
+    #[arg(long)]
+    pub keep_implied: bool,
+
+    /// Prefer broader parent modules over their specific submodules.
+    #[arg(long)]
+    pub keep_prefix: bool,
+
+    /// Preserve public imports even when the current module does not use them.
+    #[arg(long)]
+    pub keep_public: bool,
+
+    /// Keep replacements public when the original closure was public.
+    #[arg(long)]
+    pub add_public: bool,
+
+    /// Explain which declarations or compile-time dependencies require imports.
+    #[arg(long)]
+    pub explain: bool,
+
+    /// Emit GitHub problem-matcher diagnostics.
+    #[arg(long)]
+    pub gh_style: bool,
+
+    /// Limit edits to this module while still analyzing its dependency graph.
+    #[arg(long = "only", value_name = "MODULE")]
+    pub only_modules: Vec<String>,
+
+    /// Show Lake's detailed import-selection decisions.
+    #[arg(long, hide = true)]
+    pub trace: bool,
+
+    /// Root modules to analyze. Defaults to the package's default targets.
+    #[arg(value_name = "MODULE")]
+    pub modules: Vec<String>,
+}
+
 #[derive(Debug, Args)]
 pub struct LakeArgs {
     /// Arguments passed to the Lake command.

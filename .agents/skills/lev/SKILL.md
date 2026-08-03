@@ -120,6 +120,73 @@ lev upgrade PACKAGE --dry-run
   that package's documentation requests them. Do not assume Mathlib or any
   other dependency is present.
 
+## Minimize Imports Safely
+
+Preview compiler-derived import changes, then apply them:
+
+```console
+lev imports MyProject.Module --explain
+lev imports MyProject.Module --apply
+```
+
+For example, given:
+
+```lean
+module
+
+public import Mathlib
+
+public theorem five_is_prime : Nat.Prime 5 := Nat.prime_five
+```
+
+the preview can replace the broad public import with a public
+`Mathlib.Data.Nat.Prime.Defs` import plus private compile-time dependencies.
+The private list may contain tactic or elaborator modules that are not obvious
+from the theorem text; keep Lake's complete result.
+
+`lev imports` is an alias for `lev shake`. The dry run exits with status 1
+when suggestions exist. `--fix` or `--apply` snapshots the affected project
+sources, builds package defaults and requested module roots, and restores the
+sources if verification fails. Verification bypasses Lake's artifact cache and
+checks that the resulting `.olean` files are fresh.
+Use `--keep-public` for aggregator modules whose imports are intentionally part
+of their downstream API. Do not use `--force` unless analyzing stale compiled
+metadata is explicitly acceptable.
+
+For a reusable library, begin with:
+
+```console
+lev imports --keep-public --keep-implied --explain
+lev imports --keep-public --keep-implied --apply
+```
+
+Preserve a namespace-only or otherwise untraced dependency with
+`import Some.Module -- shake: keep`.
+
+For large batches, isolate failures instead of repeatedly changing policy by
+hand:
+
+```console
+lev imports --keep-public --keep-implied --fix --isolate
+```
+
+lev verifies the restored baseline before isolation. It keeps passing edit
+groups, restores rejected files, prints candidate `-- shake: keep`
+annotations, and exits with status 1 for a partial result. If the baseline
+itself fails, it restores every source and keeps no edits.
+
+Use the explicit check and coverage modes in automation:
+
+```console
+lev imports --check --coverage
+lev imports --check --coverage --json
+```
+
+`--coverage` classifies project Lean files as analyzed, outside the selected
+roots, or legacy files without a leading `module` command. `--json` owns stdout
+and emits the versioned `lev.cli.shake/v1` envelope; Lake diagnostics remain on
+stderr.
+
 ## Diagnose Failures
 
 Start with the narrowest relevant command, then inspect the environment:

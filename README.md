@@ -133,6 +133,174 @@ faster. See the
 [documentation](https://robertboy18.github.io/lev/#cache) for the measurement
 conditions and cache boundaries.
 
+## Automatic Import Minimization
+
+Use the selected Lake toolchain's compiled dependency metadata to replace broad
+imports such as `import Mathlib` with the modules a file actually needs.
+`lev imports` is a descriptive alias for `lev shake`:
+
+```console
+lev imports MyProject.Proof --explain
+lev imports MyProject.Proof --apply
+```
+
+For example, `MyProject/Primes.lean` might start with one broad public import:
+
+```lean
+module
+
+public import Mathlib
+
+public theorem five_is_prime : Nat.Prime 5 := Nat.prime_five
+```
+
+Running `lev imports MyProject.Primes --explain` produces a preview like this
+(the `add` list is abridged):
+
+```text
+MyProject/Primes.lean:
+  remove #[public import Mathlib]
+  add #[..., public import Mathlib.Data.Nat.Prime.Defs]
+  note: `public import Mathlib.Data.Nat.Prime.Defs` required
+    because `five_is_prime` refers to `Nat.Prime`
+```
+
+The complete result can contain several private imports for syntax, tactics,
+instances, or elaborators. Those are compiler-recorded dependencies, not
+source-text guesses, and the exact list can change with the Mathlib version.
+`--apply` writes the complete list, rebuilds the package defaults, and then
+rebuilds any explicitly requested module roots. Verification builds bypass
+Lake's artifact cache and finish with freshness checks, so a cache hit cannot
+hide a missing `.olean`.
+
+Without `--fix` or `--apply`, the command is a dry run and exits with status 1
+when it finds changes. Applying snapshots every affected project source,
+accepts Lake's suggestions, and verifies both default and requested targets. lev
+restores all edited files if either build fails. Stale `.olean` files are built
+automatically before analysis unless `--no-build` or `--force` is selected.
+
+Omit the module to analyze the package's default targets. Use `--keep-public`
+for deliberate public re-exports and `--keep-prefix` when a broader convenience
+module is preferable to the exact leaf imports. The selected Lake must provide
+its native `shake` command and the analyzed files must use its module system.
+
+For a reusable library, start with the conservative whole-project form:
+
+```console
+lev imports --keep-public --keep-implied --explain
+lev imports --keep-public --keep-implied --apply
+```
+
+If an import is needed only to open a namespace or provide another
+elaboration-time effect that Lake cannot trace, preserve it explicitly:
+
+```lean
+import Mathlib.Some.Module -- shake: keep
+```
+
+For a large project, `--isolate` keeps each subset of edits only after it
+passes the real build:
+
+```console
+lev imports --keep-public --keep-implied --fix --isolate
+```
+
+lev first tries the complete rewrite. If that fails, it restores and verifies
+the original baseline, then splits the proposed files into smaller groups.
+Passing groups remain applied; failing files are restored and reported with
+candidate `-- shake: keep` annotations. A partial result exits with status 1,
+and a broken baseline leaves every file unchanged.
+
+CI can check drift and audit which sources Lake actually analyzed:
+
+```console
+lev imports --check --coverage
+lev imports --check --coverage --json
+```
+
+Coverage separates project Lean files into analyzed module files, module files
+outside the selected roots, and legacy files without a leading `module`
+command. JSON uses the versioned `lev.cli.shake/v1` envelope and includes each
+proposed, applied, rejected, or restored file.
+
+### Case Study: Imperial College's FLT Project
+
+On July 28, 2026, lev was tested against the
+[Imperial College London FLT project](https://github.com/ImperialCollegeLondon/FLT)
+at commit
+[`0996e0c`](https://github.com/ImperialCollegeLondon/FLT/commit/0996e0c76ea248a676fba363be3ea8f04bdf3d44).
+This was a whole-project default-target run, not a hand-picked example. The
+checkout contained 269 Lean files; the `FLT` default target exposed 259
+module-system files to Lake's import analysis.
+
+| Measurement | Result |
+| --- | ---: |
+| Baseline full build | 8,920 jobs in 196.79 s |
+| First, fully aggressive preview | 119 files suggested |
+| Conservative final diff | 34 files, 9 insertions, 54 deletions |
+| Apply and full verification | 8,920 jobs passed in 228.04 s |
+| Repeat minimization run | Exit 0, no further changes |
+
+The first pass was intentionally aggressive. Applying all 119 suggestions
+caused compilation failures in 10 modules, so lev restored every source file
+from its transaction snapshot. Preserving public imports reduced the proposal
+to 76 files, but one module still failed. Preserving both public and implied
+imports reduced it to 34:
+
+```console
+lev imports --keep-public --keep-implied --explain
+lev imports --keep-public --keep-implied --apply
+```
+
+One file still depended on two imports for namespace or elaboration context
+that was not represented in the compiled declaration dependency graph. Those
+imports were made explicit policy:
+
+```lean
+import Mathlib.NumberTheory.NumberField.Basic -- shake: keep
+import Mathlib.RingTheory.DedekindDomain.Basic -- shake: keep
+```
+
+After those annotations, lev rewrote 33 other files automatically and the
+complete 8,920-job build passed. Running the same minimization command again
+reported no suggestions, establishing a fixed point.
+
+This progression is why lev does not treat Lake's first suggestion list as
+proof of correctness. A public import can be part of a library's downstream
+API even when the current file does not reference it directly, and a
+namespace-only import may leave no declaration edge to trace. lev applies the
+edits transactionally and accepts them only after rebuilding the real project.
+
+The run also exposed a verification weakness: Lake's artifact cache could
+report a successful build while omitting a changed `.olean`. lev now disables
+that cache for import-verification builds and follows each build with a
+freshness check. If either check fails, the original sources are restored.
+
+The timings above are observations from one checkout and machine, not a claim
+that import minimization makes builds faster by a fixed amount. The result being
+tested is narrower: lev produced a smaller verified import surface and reached
+a repeatable fixed point on a large formalization.
+
+### What the FLT Run Changed
+
+The first three follow-ups from the FLT run are now available:
+
+- **Failure isolation:** `--fix --isolate` keeps verified subsets, restores
+  rejected files, and suggests likely `-- shake: keep` annotations.
+- **Coverage reports:** `--coverage` lists analyzed module files, files outside
+  the selected roots, and legacy files without a module header.
+- **First-class CI output:** `--check --json` reports import drift through the
+  stable `lev.cli.shake/v1` envelope.
+
+The remaining roadmap is:
+
+- **SARIF output:** convert rejected edits and import drift into review
+  annotations.
+- **Before-and-after metrics:** report direct and transitive import counts,
+  affected modules, and optional measured build or elaboration time.
+- **Workspace operation:** minimize every selected Lake package with
+  per-project transactions and one aggregate report.
+
 ## Version Switching And Matrices
 
 Any release, RC, nightly, channel, or complete selector supported by the
@@ -190,6 +358,7 @@ Garbage collection is a dry run until `--apply` is present.
 ```console
 lev add PACKAGE --scope OWNER
 lev run lake env my-tool
+lev shake MyProject.Proof --fix
 lev script run Example.lean
 lev workspace build --keep-going
 lev export --format cyclonedx -o lev-sbom.json

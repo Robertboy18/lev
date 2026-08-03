@@ -52,16 +52,20 @@ impl FileTransaction {
         self.committed = true;
     }
 
-    fn restore(&self) {
+    /// Restore every snapshot while retaining rollback protection.
+    ///
+    /// A caller can continue a guarded operation after this method. Unless it
+    /// later commits, dropping the transaction restores the snapshots again.
+    pub(super) fn restore_now(&self) -> Result<()> {
         for snapshot in &self.snapshots {
-            match &snapshot.contents {
-                Some(contents) => {
-                    let _ = replace(&snapshot.path, contents);
-                }
-                None => {
-                    let _ = fs::remove_file(&snapshot.path);
-                }
-            }
+            restore_snapshot(snapshot)?;
+        }
+        Ok(())
+    }
+
+    fn restore_best_effort(&self) {
+        for snapshot in &self.snapshots {
+            let _ = restore_snapshot(snapshot);
         }
     }
 }
@@ -69,7 +73,20 @@ impl FileTransaction {
 impl Drop for FileTransaction {
     fn drop(&mut self) {
         if !self.committed {
-            self.restore();
+            self.restore_best_effort();
         }
+    }
+}
+
+fn restore_snapshot(snapshot: &FileSnapshot) -> Result<()> {
+    match &snapshot.contents {
+        Some(contents) => replace(&snapshot.path, contents),
+        None => match fs::remove_file(&snapshot.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to restore {}", snapshot.path.display()))
+            }
+        },
     }
 }

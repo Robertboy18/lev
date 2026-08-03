@@ -76,6 +76,7 @@
               <a href="#ml-benchmarking" data-section-link>ML benchmarking</a>
               <a href="#formalization" data-section-link>Formalization</a>
               <a href="#more-examples" data-section-link>More examples</a>
+              <a href="#flt-case-study" data-section-link>FLT case study</a>
             </div>
             <div class="nav-group">
               <p class="nav-group-title">Reference</p>
@@ -536,7 +537,7 @@ lev audit</code></pre>
         <section
           class="doc-section"
           id="more-examples"
-          data-title="More examples matrix CI workspace monorepo standalone Lean script signed remote cache SBOM audit"
+          data-title="More examples matrix CI workspace monorepo standalone Lean script signed remote cache imports Mathlib SBOM audit"
         >
           <p class="section-kicker">Beyond one build</p>
           <h2>More things lev can do</h2>
@@ -697,6 +698,85 @@ lev cache remote pull "$CACHE_REMOTE" \
                 </div>
               </div>
             </article>
+
+            <article class="feature-example">
+              <div class="example-copy">
+                <p class="example-number">05 / Imports</p>
+                <h3>Replace broad imports with verified dependencies</h3>
+                <p>
+                  Lake reads dependency information from compiled modules, so
+                  tactics, notation, instances, and declaration references are
+                  included. lev builds stale modules before analysis and
+                  restores every edited source if either the package-default
+                  or requested-module verification build fails. Those builds
+                  bypass artifact-cache hits and finish with freshness checks.
+                </p>
+                <p>
+                  A broad Mathlib import can become several imports rather
+                  than one. The exact private list depends on the Mathlib
+                  version and any syntax or tactics used by the module.
+                </p>
+              </div>
+
+              <div class="example-code-pair">
+                <div class="command-block">
+                  <div class="command-label">MyProject/Primes.lean before</div>
+                  <pre><code>module
+
+public import Mathlib
+
+public theorem five_is_prime :
+    Nat.Prime 5 :=
+  Nat.prime_five</code></pre>
+                </div>
+                <div class="command-block">
+                  <div class="command-label">Preview, then apply</div>
+                  <pre><code>lev imports MyProject.Primes --explain
+
+# abridged preview
+MyProject/Primes.lean:
+  remove #[public import Mathlib]
+  add #[..., public import
+    Mathlib.Data.Nat.Prime.Defs]
+  note: required because five_is_prime
+    refers to Nat.Prime
+
+lev imports MyProject.Primes --apply</code></pre>
+                </div>
+              </div>
+              <div class="example-code-pair">
+                <div class="command-block">
+                  <div class="command-label">Whole-project preview</div>
+                  <pre><code>lev imports \
+  --keep-public \
+  --keep-implied \
+  --explain</code></pre>
+                </div>
+                <div class="command-block">
+                  <div class="command-label">Apply and isolate failures</div>
+                  <pre><code>lev imports \
+  --keep-public \
+  --keep-implied \
+  --apply \
+  --isolate</code></pre>
+                </div>
+              </div>
+              <div class="example-code-pair">
+                <div class="command-block">
+                  <div class="command-label">CI drift check</div>
+                  <pre><code>lev imports \
+  --check \
+  --coverage</code></pre>
+                </div>
+                <div class="command-block">
+                  <div class="command-label">Versioned JSON report</div>
+                  <pre><code>lev imports \
+  --check \
+  --coverage \
+  --json</code></pre>
+                </div>
+              </div>
+            </article>
           </div>
 
           <h3>Inspect what is actually locked</h3>
@@ -710,6 +790,193 @@ lev cache remote pull "$CACHE_REMOTE" \
 lev why PACKAGE
 lev audit --strict
 lev export --format cyclonedx --output project.cdx.json</code></pre>
+          </div>
+        </section>
+
+        <section
+          class="doc-section"
+          id="flt-case-study"
+          data-title="FLT Fermat Last Theorem case study import minimization results rollback roadmap"
+        >
+          <p class="section-kicker">Real-project case study</p>
+          <h2>What happened when lev minimized FLT</h2>
+          <p>
+            On July 28, 2026, lev was run across the
+            <a href="https://github.com/ImperialCollegeLondon/FLT">
+              Imperial College London FLT project
+            </a>
+            at commit
+            <a href="https://github.com/ImperialCollegeLondon/FLT/commit/0996e0c76ea248a676fba363be3ea8f04bdf3d44">
+              <code>0996e0c</code>
+            </a>.
+            This was a default-target project run, not a selected demonstration
+            module. The checkout contained 269 Lean files; the
+            <code>FLT</code> target exposed 259 module-system files to Lake's
+            import analysis.
+          </p>
+
+          <dl class="quick-facts case-study-facts">
+            <div>
+              <dt>Baseline</dt>
+              <dd>8,920 jobs / 196.79 s</dd>
+            </div>
+            <div>
+              <dt>First preview</dt>
+              <dd>119 files</dd>
+            </div>
+            <div>
+              <dt>Verified diff</dt>
+              <dd>34 files / +9 -54</dd>
+            </div>
+            <div>
+              <dt>Repeat run</dt>
+              <dd>Exit 0 / fixed point</dd>
+            </div>
+          </dl>
+
+          <div class="story-steps">
+            <article>
+              <p class="story-number">01</p>
+              <div>
+                <h3>Establish a real baseline</h3>
+                <p>
+                  A complete Lake build finished all 8,920 jobs in 196.79
+                  seconds. That made the project's existing state, rather than
+                  a partial cached build, the reference for every later check.
+                </p>
+              </div>
+            </article>
+            <article>
+              <p class="story-number">02</p>
+              <div>
+                <h3>Let the aggressive pass fail safely</h3>
+                <p>
+                  The first preview proposed edits in 119 files. Applying them
+                  exposed compilation failures in 10 modules. lev restored
+                  every changed source from its transaction snapshot instead
+                  of leaving a partly minimized tree.
+                </p>
+              </div>
+            </article>
+            <article>
+              <p class="story-number">03</p>
+              <div>
+                <h3>Preserve the library contract</h3>
+                <p>
+                  Keeping public imports reduced the proposal to 76 files, but
+                  one module still failed. Keeping implied imports as well
+                  reduced it to 34. This is the appropriate starting policy
+                  for a reusable library because a public import can serve
+                  downstream users without being referenced in its own file.
+                </p>
+              </div>
+            </article>
+            <article>
+              <p class="story-number">04</p>
+              <div>
+                <h3>Record exceptions, verify, then repeat</h3>
+                <p>
+                  Two namespace-only imports needed explicit keep annotations.
+                  lev then rewrote 33 other files, and the complete 8,920-job
+                  verification passed in 228.04 seconds. A second minimization
+                  run exited successfully with no suggestions.
+                </p>
+              </div>
+            </article>
+          </div>
+
+          <div class="example-code-pair case-study-code">
+            <div class="command-block">
+              <div class="command-label">Conservative project run</div>
+              <pre><code>lev imports \
+  --keep-public \
+  --keep-implied \
+  --explain
+
+lev imports \
+  --keep-public \
+  --keep-implied \
+  --apply</code></pre>
+            </div>
+            <div class="command-block">
+              <div class="command-label">Explicit dependency policy</div>
+              <pre><code>import Mathlib.NumberTheory.NumberField.Basic -- shake: keep
+
+import Mathlib.RingTheory.DedekindDomain.Basic -- shake: keep</code></pre>
+            </div>
+          </div>
+
+          <p>
+            The result was 34 changed files, with 9 inserted lines and 54
+            deleted lines. The important result is not the raw line count: the
+            imports were accepted by the same full target that built before the
+            rewrite, and the analysis reached a stable fixed point.
+          </p>
+          <p>
+            Compiler-derived dependencies are much stronger evidence than
+            searching source text, but they are not a complete model of library
+            intent. Public re-exports are API, and an import used only to make a
+            namespace or elaboration context available may leave no declaration
+            edge for Lake to follow. The conservative flags preserve more of
+            that intent; verification catches anything still missing.
+          </p>
+
+          <aside class="note" aria-label="Verification lesson from FLT">
+            <strong>The case study improved lev itself.</strong>
+            It exposed a path where Lake's artifact cache could report a
+            successful verification build without producing a changed
+            <code>.olean</code>. Import verification now bypasses that cache
+            and performs a separate freshness check. Any failure restores the
+            original sources.
+          </aside>
+
+          <h3 class="roadmap-heading">What the FLT run changed</h3>
+          <p>
+            The failure modes from that run now have dedicated CLI workflows.
+            Metrics, SARIF, and workspace-wide application remain future work.
+          </p>
+          <div class="roadmap-list">
+            <article>
+              <h3>Failure isolation</h3>
+              <p>
+                <strong>Available now.</strong>
+                <code>--fix --isolate</code> verifies the restored baseline,
+                keeps passing edit groups, restores rejected files, and
+                suggests likely <code>-- shake: keep</code> annotations.
+              </p>
+            </article>
+            <article>
+              <h3>Coverage reporting</h3>
+              <p>
+                <strong>Available now.</strong>
+                <code>--coverage</code> separates analyzed module files, files
+                outside selected roots, and legacy files without a module
+                header.
+              </p>
+            </article>
+            <article>
+              <h3>CI output</h3>
+              <p>
+                <strong>Available now.</strong>
+                <code>--check --json</code> emits the stable
+                <code>lev.cli.shake/v1</code> report. SARIF review annotations
+                remain planned.
+              </p>
+            </article>
+            <article>
+              <h3>Measured impact</h3>
+              <p>
+                Compare direct and transitive import counts, affected modules,
+                and optional build or elaboration timings.
+              </p>
+            </article>
+            <article>
+              <h3>Workspace operation</h3>
+              <p>
+                Process selected Lake packages with per-project transactions
+                and one aggregate report.
+              </p>
+            </article>
           </div>
         </section>
 
@@ -829,6 +1096,7 @@ lev export --format cyclonedx --output project.cdx.json</code></pre>
             <div><code>lev cache</code><span>Inspect, verify, or clean shared state.</span></div>
             <div><code>lev doctor</code><span>Check Lean, Lake, Git, and cache setup.</span></div>
             <div><code>lev audit</code><span>Check lock and checkout integrity.</span></div>
+            <div><code>lev shake</code><span>Infer and safely apply minimal imports; <code>lev imports</code> is an alias.</span></div>
             <div><code>lev matrix</code><span>Run one command across isolated toolchains.</span></div>
             <div><code>lev workspace</code><span>Operate on a configured set of Lake projects.</span></div>
             <div><code>lev script</code><span>Run one Lean file in a cached inline environment.</span></div>

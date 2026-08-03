@@ -27,6 +27,7 @@ mod native_resolver;
 mod project_commands;
 mod script_commands;
 mod self_commands;
+mod shake_commands;
 mod sync_commands;
 mod tool_commands;
 mod toolchain_commands;
@@ -90,7 +91,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
         CliCommand::Lint(args) => execution_commands::workflow(&context, "lint", args),
         CliCommand::Clean(args) => execution_commands::lake_command(&context, "clean", args),
         CliCommand::Check(args) => execution_commands::check(&context, args),
-        CliCommand::Shake(args) => execution_commands::workflow(&context, "shake", args),
+        CliCommand::Shake(args) => shake_commands::shake(&context, args),
         CliCommand::Deps(args) => project_commands::dependencies(&context, args),
         CliCommand::Tree(args) => project_commands::dependency_tree(&context, args),
         CliCommand::Why(args) => project_commands::why_dependency(&context, args),

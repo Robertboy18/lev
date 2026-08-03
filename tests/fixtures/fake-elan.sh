@@ -134,9 +134,89 @@ if [ "${1:-}" = "run" ]; then
   fi
 
   if [ "${1:-}" = "lake" ] && [ "${2:-}" = "build" ]; then
+    if [ "${3:-}" = "--no-build" ]; then
+      printf 'lake-check\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
+      if [ "${LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD:-}" = "1" ] &&
+         [ "${LAKE_ARTIFACT_CACHE:-}" != "false" ]; then
+        echo "shake freshness check used Lake's artifact cache" >&2
+        exit 49
+      fi
+      if [ "${LEV_TEST_SHAKE_FRESHNESS_FAIL:-}" = "1" ]; then
+        echo "error: object file 'Root.olean' of module Root does not exist" >&2
+        exit 1
+      fi
+      if [ "${LEV_TEST_SHAKE_EXPLICIT_REQUIRE_BUILD:-}" = "1" ] &&
+         [ ! -f "${LEV_TEST_SHAKE_BUILD_MARKER:?}" ]; then
+        echo "error: target is out-of-date and needs to be rebuilt" >&2
+        exit 3
+      fi
+      exit 0
+    fi
     printf 'lake-build\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
+    if [ "${LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD:-}" = "1" ] &&
+       [ "${LAKE_ARTIFACT_CACHE:-}" != "false" ]; then
+      echo "shake verification used Lake's artifact cache" >&2
+      exit 49
+    fi
     if [ "${LEV_TEST_LAKE_BUILD_FAIL_MEMBER:-}" = "$(basename "$PWD")" ]; then
       exit "${LEV_TEST_LAKE_BUILD_EXIT:-37}"
+    fi
+    if [ -n "${LEV_TEST_SHAKE_FAIL_FILE:-}" ] &&
+       grep -Fq "${LEV_TEST_SHAKE_FAIL_CONTENT:?}" "$LEV_TEST_SHAKE_FAIL_FILE"; then
+      echo "simulated source-dependent build failure" >&2
+      exit "${LEV_TEST_SHAKE_FAIL_EXIT:-41}"
+    fi
+    if [ -n "${LEV_TEST_SHAKE_BUILD_MARKER:-}" ]; then
+      touch "$LEV_TEST_SHAKE_BUILD_MARKER"
+    fi
+    exit 0
+  fi
+
+  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "shake" ]; then
+    printf 'lake-shake\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
+    fix=0
+    explain=0
+    for argument in "$@"; do
+      if [ "$argument" = "--fix" ]; then
+        fix=1
+      fi
+      if [ "$argument" = "--explain" ]; then
+        explain=1
+      fi
+    done
+    if [ "${LEV_TEST_SHAKE_REQUIRE_BUILD:-}" = "1" ] &&
+       [ ! -f "${LEV_TEST_SHAKE_BUILD_MARKER:?}" ]; then
+      echo "error: there are out of date oleans; run \`lake build\` first" >&2
+      exit 1
+    fi
+    if [ "$explain" = "1" ]; then
+      if [ -n "${LEV_TEST_SHAKE_EXPLAIN_FILE:-}" ]; then
+        printf '%s:\n' "$LEV_TEST_SHAKE_EXPLAIN_FILE"
+      fi
+      if [ -n "${LEV_TEST_SHAKE_EXPLAIN_SECOND_FILE:-}" ]; then
+        printf '%s:\n' "$LEV_TEST_SHAKE_EXPLAIN_SECOND_FILE"
+      fi
+    fi
+    if [ "${LEV_TEST_SHAKE_SUGGEST:-}" = "1" ]; then
+      printf '%s:\n' "${LEV_TEST_SHAKE_FILE:?}"
+      echo "  remove #[import Mathlib]"
+      echo "  add #[import Mathlib.Data.Nat.Prime.Basic]"
+      if [ -n "${LEV_TEST_SHAKE_SECOND_FILE:-}" ]; then
+        printf '%s:\n' "$LEV_TEST_SHAKE_SECOND_FILE"
+        echo "  remove #[import Mathlib]"
+        echo "  add #[import Mathlib.Algebra.Order.Ring.Nat]"
+      fi
+      if [ "$fix" = "1" ]; then
+        cp "${LEV_TEST_SHAKE_REPLACEMENT_FILE:?}" "$LEV_TEST_SHAKE_FILE"
+        count=1
+        if [ -n "${LEV_TEST_SHAKE_SECOND_FILE:-}" ]; then
+          cp "${LEV_TEST_SHAKE_SECOND_REPLACEMENT_FILE:?}" "$LEV_TEST_SHAKE_SECOND_FILE"
+          count=2
+        fi
+        printf 'Successfully applied %s suggestions.\n' "$count"
+        exit 0
+      fi
+      exit 1
     fi
     exit 0
   fi

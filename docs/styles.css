@@ -327,6 +327,10 @@ ul {
   border-bottom: 1px solid var(--line-strong);
 }
 
+.case-study-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .quick-facts div {
   min-width: 0;
   padding: 15px 18px 15px 0;
@@ -392,6 +396,50 @@ ul {
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   font-weight: 800;
+}
+
+.story-steps {
+  max-width: 820px;
+  margin: 34px 0;
+}
+
+.story-steps article {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 18px;
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+}
+
+.story-steps article:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.story-steps h3,
+.story-steps p {
+  margin-top: 0;
+}
+
+.story-steps article > div > p:last-child {
+  margin-bottom: 0;
+}
+
+.story-number {
+  margin: 2px 0 0;
+  color: var(--green);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.example-code-pair.case-study-code {
+  grid-template-columns: minmax(230px, 0.65fr) minmax(0, 1.35fr);
+  max-width: 820px;
+  margin: 30px 0;
+}
+
+.case-study-code .command-block {
+  margin: 0;
 }
 
 .example-list {
@@ -950,6 +998,32 @@ tbody tr:last-child td {
   margin: 0;
 }
 
+.roadmap-heading {
+  margin-top: 44px;
+}
+
+.roadmap-list {
+  max-width: 820px;
+  margin-top: 30px;
+}
+
+.roadmap-list article {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1fr);
+  gap: 28px;
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+}
+
+.roadmap-list article:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.roadmap-list h3,
+.roadmap-list p {
+  margin: 0;
+}
+
 .command-map {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1090,6 +1164,10 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .example-code-pair.case-study-code {
+    grid-template-columns: 1fr;
+  }
+
   .quick-facts div {
     padding: 12px 0;
   }
@@ -1182,7 +1260,8 @@ tbody tr:last-child td {
     border-left: 2px solid var(--green);
   }
 
-  .failure-list article {
+  .failure-list article,
+  .roadmap-list article {
     grid-template-columns: 1fr;
     gap: 7px;
   }

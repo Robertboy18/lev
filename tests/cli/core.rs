@@ -577,3 +577,511 @@ fn build_failures_name_lake_the_toolchain_and_a_focused_rerun() {
         "{log}"
     );
 }
+
+#[test]
+fn shake_dry_run_reports_precise_imports_without_writing() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    let original = "module\n\nimport Mathlib\n\ntheorem example : True := trivial\n";
+    fs::write(&source, original).unwrap();
+    fs::write(
+        &replacement,
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n\ntheorem example : True := trivial\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev()
+        .arg("imports")
+        .arg("--no-sync")
+        .arg("--keep-public")
+        .arg("--explain")
+        .arg("Root")
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .env("LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("remove #[import Mathlib]"), "{stdout}");
+    assert!(
+        stdout.contains("add #[import Mathlib.Data.Nat.Prime.Basic]"),
+        "{stdout}"
+    );
+    assert_eq!(fs::read_to_string(source).unwrap(), original);
+    let log = fs::read_to_string(&fixture.log).unwrap();
+    assert!(
+        log.lines()
+            .any(|line| { line.contains("lake shake --keep-public --explain Root") }),
+        "{log}"
+    );
+    assert!(
+        log.lines()
+            .any(|line| line.contains("lake build --no-build +Root")),
+        "{log}"
+    );
+    assert!(!log.contains("lake-build"), "{log}");
+}
+
+#[test]
+fn shake_apply_rewrites_then_verifies_the_module_and_project() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    let original = "module\n\nimport Mathlib\n\ntheorem example : True := trivial\n";
+    let minimized =
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n\ntheorem example : True := trivial\n";
+    fs::write(&source, original).unwrap();
+    fs::write(&replacement, minimized).unwrap();
+
+    let output = fixture
+        .lev()
+        .arg("shake")
+        .arg("--no-sync")
+        .arg("--apply")
+        .arg("Root")
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .env("LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD", "1")
+        .output()
+        .unwrap();
+
+    assert_success_ref(&output);
+    assert_eq!(fs::read_to_string(source).unwrap(), minimized);
+    let log = fs::read_to_string(&fixture.log).unwrap();
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("lake-shake"))
+            .count(),
+        2,
+        "{log}"
+    );
+    let builds = log
+        .lines()
+        .filter(|line| line.contains("lake-build"))
+        .collect::<Vec<_>>();
+    assert_eq!(builds.len(), 2, "{log}");
+    assert!(builds[0].ends_with("lake build"), "{log}");
+    assert!(builds[1].contains("lake build +Root"), "{log}");
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("lake-check"))
+            .count(),
+        3,
+        "{log}"
+    );
+}
+
+#[test]
+fn shake_fix_restores_sources_when_default_artifacts_are_missing() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    let original = "module\n\nimport Mathlib\n\ntheorem example : True := trivial\n";
+    fs::write(&source, original).unwrap();
+    fs::write(
+        &replacement,
+        "module\n\nimport Mathlib.Init\n\ntheorem example : True := trivial\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev()
+        .arg("shake")
+        .arg("--no-sync")
+        .arg("--fix")
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .env("LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD", "1")
+        .env("LEV_TEST_SHAKE_FRESHNESS_FAIL", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(fs::read_to_string(source).unwrap(), original);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("object file 'Root.olean'"), "{stderr}");
+    assert!(
+        stderr.contains("import verification failed; restoring the original Lean sources"),
+        "{stderr}"
+    );
+    let log = fs::read_to_string(&fixture.log).unwrap();
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("lake-build"))
+            .count(),
+        1,
+        "{log}"
+    );
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("lake-check"))
+            .count(),
+        1,
+        "{log}"
+    );
+}
+
+#[test]
+fn shake_fix_restores_sources_when_the_verification_build_fails() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    let original = "module\n\nimport Mathlib\n\ntheorem example : True := trivial\n";
+    fs::write(&source, original).unwrap();
+    fs::write(
+        &replacement,
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n\ntheorem example : True := trivial\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev()
+        .arg("shake")
+        .arg("--no-sync")
+        .arg("--fix")
+        .arg("Root")
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .env("LEV_TEST_LAKE_BUILD_FAIL_MEMBER", "project")
+        .env("LEV_TEST_LAKE_BUILD_EXIT", "37")
+        .env("LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(37));
+    assert_eq!(fs::read_to_string(source).unwrap(), original);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("import verification failed; restoring the original Lean sources"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn shake_builds_stale_modules_and_retries_analysis() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    let marker = fixture.root.join("shake-built");
+    fs::write(&source, "module\n\nimport Mathlib\n").unwrap();
+    fs::write(&replacement, "module\n\nimport Mathlib.Init\n").unwrap();
+
+    let output = fixture
+        .lev()
+        .arg("shake")
+        .arg("--no-sync")
+        .arg("Root")
+        .env("LEV_TEST_SHAKE_REQUIRE_BUILD", "1")
+        .env("LEV_TEST_SHAKE_BUILD_MARKER", &marker)
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .env("LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(marker.is_file());
+    let log = fs::read_to_string(&fixture.log).unwrap();
+    let actions = log
+        .lines()
+        .filter(|line| line.contains("lake-shake") || line.contains("lake-build"))
+        .collect::<Vec<_>>();
+    assert_eq!(actions.len(), 4, "{log}");
+    assert!(actions[0].contains("lake-shake"), "{log}");
+    assert!(actions[1].ends_with("lake build"), "{log}");
+    assert!(actions[2].contains("lake build +Root"), "{log}");
+    assert!(actions[3].contains("lake-shake"), "{log}");
+}
+
+#[test]
+fn shake_builds_stale_explicit_modules_before_analysis() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    let marker = fixture.root.join("explicit-shake-built");
+    fs::write(&source, "module\n\nimport Mathlib\n").unwrap();
+    fs::write(&replacement, "module\n\nimport Mathlib.Init\n").unwrap();
+
+    let output = fixture
+        .lev()
+        .arg("shake")
+        .arg("--no-sync")
+        .arg("Root")
+        .env("LEV_TEST_SHAKE_EXPLICIT_REQUIRE_BUILD", "1")
+        .env("LEV_TEST_SHAKE_BUILD_MARKER", &marker)
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .env("LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(marker.is_file());
+    let log = fs::read_to_string(&fixture.log).unwrap();
+    let actions = log
+        .lines()
+        .filter(|line| {
+            line.contains("lake-check")
+                || line.contains("lake-build")
+                || line.contains("lake-shake")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actions.len(), 3, "{log}");
+    assert!(actions[0].contains("lake build --no-build +Root"), "{log}");
+    assert!(actions[1].contains("lake build +Root"), "{log}");
+    assert!(actions[2].contains("lake shake Root"), "{log}");
+}
+
+#[test]
+fn shake_fix_refuses_to_edit_dependency_checkouts() {
+    let fixture = Fixture::new();
+    let source = fixture
+        .project
+        .join(".lake/packages/mathlib/Mathlib/Unsafe.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::write(&source, "module\n\nimport Mathlib\n").unwrap();
+    fs::write(&replacement, "module\n\nimport Mathlib.Init\n").unwrap();
+
+    let output = fixture
+        .lev()
+        .arg("shake")
+        .arg("--no-sync")
+        .arg("--fix")
+        .arg("Mathlib.Unsafe")
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(source).unwrap(),
+        "module\n\nimport Mathlib\n"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("refusing to edit generated or dependency source"),
+        "{stderr}"
+    );
+    let log = fs::read_to_string(&fixture.log).unwrap();
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("lake-shake"))
+            .count(),
+        1,
+        "{log}"
+    );
+}
+
+#[test]
+fn shake_check_conflicts_with_fix() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .lev()
+        .args(["shake", "--check", "--fix"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--check"), "{stderr}");
+    assert!(stderr.contains("--fix"), "{stderr}");
+}
+
+#[test]
+fn shake_isolate_requires_fix() {
+    let fixture = Fixture::new();
+    let output = fixture.lev().args(["shake", "--isolate"]).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--fix"), "{stderr}");
+}
+
+#[test]
+fn shake_check_emits_a_versioned_json_drift_report() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    fs::write(&source, "module\n\nimport Mathlib\n").unwrap();
+    fs::write(
+        &replacement,
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev()
+        .args(["shake", "--no-sync", "--check", "--json"])
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let report = json_data(&output, "lev.cli.shake/v1");
+    assert_eq!(report["mode"], "check");
+    assert_eq!(report["status"], "changes_required");
+    assert_eq!(report["files"].as_array().unwrap().len(), 1);
+    assert_eq!(report["files"][0]["path"], "Root.lean");
+    assert_eq!(
+        report["files"][0]["removed_imports"],
+        json!(["import Mathlib"])
+    );
+    assert_eq!(
+        report["files"][0]["added_imports"],
+        json!(["import Mathlib.Data.Nat.Prime.Basic"])
+    );
+    assert_eq!(report["files"][0]["disposition"], "proposed");
+    assert_eq!(
+        fs::read_to_string(source).unwrap(),
+        "module\n\nimport Mathlib\n"
+    );
+}
+
+#[test]
+fn shake_coverage_classifies_every_project_lean_file_once() {
+    let fixture = Fixture::new();
+    let analyzed = fixture.project.join("Analyzed.lean");
+    fs::write(&analyzed, "module\n\nimport Init\n").unwrap();
+    fs::write(
+        fixture.project.join("Outside.lean"),
+        "-- header\nmodule\n\nimport Init\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.project.join("Legacy.lean"),
+        "import Init\n\ndef legacy := true\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev()
+        .args(["shake", "--no-sync", "--check", "--coverage", "--json"])
+        .env("LEV_TEST_SHAKE_EXPLAIN_FILE", &analyzed)
+        .output()
+        .unwrap();
+
+    assert_success_ref(&output);
+    let report = json_data(&output, "lev.cli.shake/v1");
+    assert_eq!(report["status"], "clean");
+    assert_eq!(report["coverage"]["total_files"], 3);
+    assert_eq!(report["coverage"]["analyzed"], json!(["Analyzed.lean"]));
+    assert_eq!(report["coverage"]["outside_roots"], json!(["Outside.lean"]));
+    assert_eq!(report["coverage"]["legacy"], json!(["Legacy.lean"]));
+}
+
+#[test]
+fn shake_isolate_keeps_passing_edits_and_restores_failing_edits() {
+    let fixture = Fixture::new();
+    let passing = fixture.project.join("A.lean");
+    let failing = fixture.project.join("B.lean");
+    let passing_replacement = fixture.root.join("A.replacement.lean");
+    let failing_replacement = fixture.root.join("B.replacement.lean");
+    let passing_original = "module\n\nimport Mathlib\n\ndef passing := true\n";
+    let failing_original = "module\n\nimport Mathlib\n\ndef failing := true\n";
+    let passing_minimized =
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n\ndef passing := true\n";
+    let failing_minimized = "module\n\nimport Mathlib.Algebra.Order.Ring.Nat\n\n-- BROKEN_IMPORT\ndef failing := true\n";
+    fs::write(&passing, passing_original).unwrap();
+    fs::write(&failing, failing_original).unwrap();
+    fs::write(&passing_replacement, passing_minimized).unwrap();
+    fs::write(&failing_replacement, failing_minimized).unwrap();
+
+    let output = fixture
+        .lev()
+        .args(["shake", "--no-sync", "--fix", "--isolate", "--json"])
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &passing)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &passing_replacement)
+        .env("LEV_TEST_SHAKE_SECOND_FILE", &failing)
+        .env(
+            "LEV_TEST_SHAKE_SECOND_REPLACEMENT_FILE",
+            &failing_replacement,
+        )
+        .env("LEV_TEST_SHAKE_FAIL_FILE", &failing)
+        .env("LEV_TEST_SHAKE_FAIL_CONTENT", "BROKEN_IMPORT")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(fs::read_to_string(&passing).unwrap(), passing_minimized);
+    assert_eq!(fs::read_to_string(&failing).unwrap(), failing_original);
+    let report = json_data(&output, "lev.cli.shake/v1");
+    assert_eq!(report["mode"], "isolate");
+    assert_eq!(report["status"], "partially_applied");
+    assert_eq!(report["files"][0]["path"], "A.lean");
+    assert_eq!(report["files"][0]["disposition"], "applied");
+    assert_eq!(report["files"][1]["path"], "B.lean");
+    assert_eq!(report["files"][1]["disposition"], "rejected");
+    assert_eq!(
+        report["files"][1]["keep_annotations"],
+        json!(["import Mathlib -- shake: keep"])
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("keep the dependency with `import Mathlib -- shake: keep`"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn shake_isolate_restores_every_edit_when_the_baseline_fails() {
+    let fixture = Fixture::new();
+    let first = fixture.project.join("A.lean");
+    let broken = fixture.project.join("B.lean");
+    let first_replacement = fixture.root.join("A.replacement.lean");
+    let broken_replacement = fixture.root.join("B.replacement.lean");
+    let first_original = "module\n\nimport Mathlib\n\ndef first := true\n";
+    let broken_original = "module\n\nimport Mathlib\n\n-- BASELINE_BROKEN\ndef broken := true\n";
+    fs::write(&first, first_original).unwrap();
+    fs::write(&broken, broken_original).unwrap();
+    fs::write(
+        &first_replacement,
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n\ndef first := true\n",
+    )
+    .unwrap();
+    fs::write(
+        &broken_replacement,
+        "module\n\nimport Mathlib.Algebra.Order.Ring.Nat\n\n-- BASELINE_BROKEN\ndef broken := true\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev()
+        .args(["shake", "--no-sync", "--fix", "--isolate", "--json"])
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &first)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &first_replacement)
+        .env("LEV_TEST_SHAKE_SECOND_FILE", &broken)
+        .env(
+            "LEV_TEST_SHAKE_SECOND_REPLACEMENT_FILE",
+            &broken_replacement,
+        )
+        .env("LEV_TEST_SHAKE_FAIL_FILE", &broken)
+        .env("LEV_TEST_SHAKE_FAIL_CONTENT", "BASELINE_BROKEN")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(41));
+    assert_eq!(fs::read_to_string(&first).unwrap(), first_original);
+    assert_eq!(fs::read_to_string(&broken).unwrap(), broken_original);
+    let report = json_data(&output, "lev.cli.shake/v1");
+    assert_eq!(report["status"], "baseline_failed");
+    for file in report["files"].as_array().unwrap() {
+        assert_eq!(file["disposition"], "restored");
+    }
+}

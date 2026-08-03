@@ -120,8 +120,9 @@ pub enum Command {
     /// Elaborate a Lean file in the Lake environment.
     Check(CheckArgs),
 
-    /// Analyze or minimize unused Lean imports.
-    Shake(WorkflowArgs),
+    /// Infer and optionally apply minimal Lean imports.
+    #[command(visible_alias("imports"))]
+    Shake(ShakeArgs),
 
     /// Inspect dependencies recorded in lake-manifest.json.
     Deps(DepsArgs),

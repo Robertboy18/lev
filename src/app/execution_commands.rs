@@ -4,6 +4,7 @@
 //! sync, locks, and local workspaces.
 
 use std::ffi::OsString;
+use std::process::{Command, ExitStatus};
 
 use anyhow::{Context, Result};
 
@@ -61,7 +62,7 @@ pub(super) fn build(context: &AppContext, args: BuildArgs) -> Result<i32> {
     Ok(code)
 }
 
-/// Run one standard Lake workflow such as `test`, `lint`, or `shake`.
+/// Run one standard Lake workflow such as `test` or `lint`.
 pub(super) fn workflow(
     context: &AppContext,
     lake_subcommand: &str,
@@ -160,7 +161,7 @@ pub(super) fn task(context: &AppContext, args: TaskArgs) -> Result<i32> {
 }
 
 /// Select the requested environment and apply the common execution preflight.
-fn prepared_project(
+pub(super) fn prepared_project(
     context: &AppContext,
     source: &Project,
     selector: Option<&str>,
@@ -239,20 +240,44 @@ pub(super) fn run_in_project(
     args: &[OsString],
     install_toolchain: bool,
 ) -> Result<i32> {
+    let _dependency_environment = dependency_env::lock_attached(&context.cache, project)?;
+    let _artifact_cache = lake_artifact_cache::lock_shared(&context.cache, &project.toolchain)?;
+    registry::record(&context.cache, project)?;
+    Ok(exit_code(run_unlocked_in_project(
+        context,
+        project,
+        args,
+        install_toolchain,
+    )?))
+}
+
+fn run_unlocked_in_project(
+    context: &AppContext,
+    project: &Project,
+    args: &[OsString],
+    install_toolchain: bool,
+) -> Result<ExitStatus> {
+    let mut command = project_command(context, project, args, install_toolchain)?;
+    passthrough_status(&mut command)
+}
+
+pub(super) fn project_command(
+    context: &AppContext,
+    project: &Project,
+    args: &[OsString],
+    install_toolchain: bool,
+) -> Result<Command> {
     let (program, arguments) = args
         .split_first()
         .context("a command is required after `lev run`")?;
-    let _dependency_environment = dependency_env::lock_attached(&context.cache, project)?;
-    let _artifact_cache = lake_artifact_cache::lock_shared(&context.cache, &project.toolchain)?;
     let mut command =
         context.runtime_command(&project.toolchain, program.as_os_str(), install_toolchain)?;
     command.args(arguments);
     context.command_env(&mut command, project)?;
-    registry::record(&context.cache, project)?;
-    Ok(exit_code(passthrough_status(&mut command)?))
+    Ok(command)
 }
 
-fn display_os_command(command: &[OsString]) -> String {
+pub(super) fn display_os_command(command: &[OsString]) -> String {
     command
         .iter()
         .map(|part| part.to_string_lossy())

@@ -19,6 +19,7 @@
         "lev.cli.cache.remote.push/v1",
         "lev.cli.deps/v1",
         "lev.cli.outdated/v1",
+        "lev.cli.shake/v1",
         "lev.cli.tool.list/v1",
         "lev.cli.tool.gc/v1",
         "lev.cli.toolchain.chunks.install/v1",
