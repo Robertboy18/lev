@@ -1,15 +1,36 @@
 # lev
 
-A [uv](https://github.com/astral-sh/uv)-inspired, fast project environment
-manager for Lean: toolchains, dependencies, caches, and repeatable workspaces
-in one command.
+A [uv](https://github.com/astral-sh/uv)-inspired project environment manager
+for Lean: toolchains, dependencies, caches, and repeatable workspaces behind
+one command.
 
-lev is built for repeated work. A cold Lean build is still a cold build, but
-matching toolchains, Git dependencies, locked environments, and Lake artifacts
-can be reused across projects instead of downloaded or compiled again.
+lev started from a practical annoyance. Returning to a Lean project should be
+uneventful. A cold build is still a cold build, but a second checkout should
+not forget everything the first one downloaded, resolved, and built.
+lev reuses matching toolchains, exact Git dependencies, locked environments,
+and compatible Lake artifacts across projects.
 
 **[Read the full documentation](https://robertboy18.github.io/lev/)** for
 toolchains, version matrices, workspaces, scripts, remote caches, and CI.
+
+The manual is split by workflow, so you can go directly to the part you need:
+
+- [Getting started](https://robertboy18.github.io/lev/getting-started.html):
+  install lev, adopt an existing Lake project, and learn the daily commands.
+- [Environments and cache](https://robertboy18.github.io/lev/environments.html):
+  understand environment identity, locks, shared artifacts, signed remote
+  snapshots, and version matrices.
+- [Imports and graphs](https://robertboy18.github.io/lev/imports.html):
+  preview safe import minimization, read explanations, run it across a
+  workspace, and inspect the FLT case study.
+- [Profiling](https://robertboy18.github.io/lev/profiling.html): distinguish
+  one-run lev timings, repeated process samples, and Lean's native elaborator
+  profiler, with plots and JSON output.
+- [Automation](https://robertboy18.github.io/lev/automation.html): compose
+  verification, upgrades, workspace operations, bundles, watch loops, tasks,
+  scripts, and CI.
+- [Command reference](https://robertboy18.github.io/lev/reference.html): scan
+  the complete command map, output schemas, and exit behavior.
 
 ## Installation
 
@@ -114,7 +135,7 @@ decides what a build means and whether an artifact is valid.
 
 ## Fast Cache Reuse
 
-In one measured identical fresh checkout, another checkout had already
+In one measured fresh-checkout comparison, another checkout had already
 populated the compatible artifact cache:
 
 | Fresh checkout command | Elapsed |
@@ -128,16 +149,19 @@ configured warm Lake was equally fast, as it should be: Lake is the artifact
 cache engine. lev makes the cache path, toolchain namespace, locks, Git reuse,
 verification, and cleanup consistent across projects.
 
-This is a cache-reuse result, not a claim that lev compiles new Lean code 37x
-faster. See the
-[documentation](https://robertboy18.github.io/lev/#cache) for the measurement
+The speedup came from reusing compatible work; lev did not make Lean compile
+new code 37x faster. See the
+[documentation](https://robertboy18.github.io/lev/environments.html#cache) for the measurement
 conditions and cache boundaries.
 
 ## Automatic Import Minimization
 
-Use the selected Lake toolchain's compiled dependency metadata to replace broad
-imports such as `import Mathlib` with the modules a file actually needs.
-`lev imports` is a descriptive alias for `lev shake`:
+Import minimization came from a similar annoyance. A file might use one small
+corner of Mathlib, yet finding the right leaf imports by hand means guessing
+about syntax, tactics, instances, and elaboration-time dependencies.
+lev asks the selected Lake toolchain instead. It uses compiled dependency
+metadata to replace broad imports such as `import Mathlib` with the modules the
+file actually needs. `lev imports` is a descriptive alias for `lev shake`:
 
 ```console
 lev imports MyProject.Proof --explain
@@ -154,20 +178,13 @@ public import Mathlib
 public theorem five_is_prime : Nat.Prime 5 := Nat.prime_five
 ```
 
-Running `lev imports MyProject.Primes --explain` produces a preview like this
-(the `add` list is abridged):
-
-```text
-MyProject/Primes.lean:
-  remove #[public import Mathlib]
-  add #[..., public import Mathlib.Data.Nat.Prime.Defs]
-  note: `public import Mathlib.Data.Nat.Prime.Defs` required
-    because `five_is_prime` refers to `Nat.Prime`
-```
-
-The complete result can contain several private imports for syntax, tactics,
-instances, or elaborators. Those are compiler-recorded dependencies, not
-source-text guesses, and the exact list can change with the Mathlib version.
+Running `lev imports MyProject.Primes --explain` prints every proposed removal
+and addition. The reason attached to
+`public import Mathlib.Data.Nat.Prime.Defs` identifies `five_is_prime` and its
+reference to `Nat.Prime`. The result can also contain private imports for
+syntax, tactics, instances, or elaborators. Those are compiler-recorded
+dependencies, not source-text guesses, and the exact list can change with the
+Mathlib version.
 `--apply` writes the complete list, rebuilds the package defaults, and then
 rebuilds any explicitly requested module roots. Verification builds bypass
 Lake's artifact cache and finish with freshness checks, so a cache hit cannot
@@ -225,7 +242,10 @@ proposed, applied, rejected, or restored file.
 
 ### Case Study: Imperial College's FLT Project
 
-On July 28, 2026, lev was tested against the
+A one-file example can make import minimization look easier than it is. The
+test that mattered was a real library with public re-exports, namespace
+effects, and enough files for a bad rewrite to hurt. On July 28, 2026, lev was
+tested against the
 [Imperial College London FLT project](https://github.com/ImperialCollegeLondon/FLT)
 at commit
 [`0996e0c`](https://github.com/ImperialCollegeLondon/FLT/commit/0996e0c76ea248a676fba363be3ea8f04bdf3d44).
@@ -241,11 +261,12 @@ module-system files to Lake's import analysis.
 | Apply and full verification | 8,920 jobs passed in 228.04 s |
 | Repeat minimization run | Exit 0, no further changes |
 
-The first pass was intentionally aggressive. Applying all 119 suggestions
-caused compilation failures in 10 modules, so lev restored every source file
-from its transaction snapshot. Preserving public imports reduced the proposal
-to 76 files, but one module still failed. Preserving both public and implied
-imports reduced it to 34:
+The first number looked excellent: 119 files could apparently lose broad
+imports. Then the full build failed in 10 modules. That failure was the useful
+part of the experiment. lev restored every source file from its transaction
+snapshot, and the next run preserved public imports. The proposal fell to 76
+files, but one module still failed. Preserving implied imports as well brought
+the proposal to 34:
 
 ```console
 lev imports --keep-public --keep-implied --explain
@@ -262,8 +283,9 @@ import Mathlib.RingTheory.DedekindDomain.Basic -- shake: keep
 ```
 
 After those annotations, lev rewrote 33 other files automatically and the
-complete 8,920-job build passed. Running the same minimization command again
-reported no suggestions, establishing a fixed point.
+complete 8,920-job build passed. Then came the satisfying final check: running
+the same minimization command again found nothing else to change. The project
+had reached a fixed point.
 
 This progression is why lev does not treat Lake's first suggestion list as
 proof of correctness. A public import can be part of a library's downstream
@@ -271,101 +293,194 @@ API even when the current file does not reference it directly, and a
 namespace-only import may leave no declaration edge to trace. lev applies the
 edits transactionally and accepts them only after rebuilding the real project.
 
-The run also exposed a verification weakness: Lake's artifact cache could
-report a successful build while omitting a changed `.olean`. lev now disables
-that cache for import-verification builds and follows each build with a
-freshness check. If either check fails, the original sources are restored.
+The project also found a bug in lev's idea of "verified." Lake's artifact cache
+could report success while omitting a changed `.olean`. lev now disables that
+cache for import-verification builds and follows each build with a freshness
+check. If either check fails, the original sources are restored.
 
-The timings above are observations from one checkout and machine, not a claim
-that import minimization makes builds faster by a fixed amount. The result being
-tested is narrower: lev produced a smaller verified import surface and reached
-a repeatable fixed point on a large formalization.
+Those timings belong to this checkout and machine. The reusable result is the
+workflow: lev produced a smaller verified import surface and reached the same
+fixed point when it ran again.
 
-### What the FLT Run Changed
+## Measure, Inspect, And Automate
 
-The follow-ups from the FLT run are now available:
+Once the environments worked, the next problem was all the useful shell glue
+that accumulates around Lake. Lake still performs the build, test, lint, and
+import analysis. lev gives the timing loops, release checklists, watchers,
+reports, and source handoffs a command and a stable output contract.
 
-- **Failure isolation:** `--fix --isolate` keeps verified subsets, restores
-  rejected files, and suggests likely `-- shake: keep` annotations.
-- **Coverage reports:** `--coverage` lists analyzed module files, files outside
-  the selected roots, and legacy files without a module header.
-- **CI output:** `--check --json` emits the stable `lev.cli.shake/v1` envelope,
-  while `--check --sarif lev-shake.sarif` writes review annotations.
-- **Import graph inspection:** `lev graph` reports direct and transitive module
-  relationships as text, JSON, or Graphviz DOT.
-- **Measured execution:** global `--timings` reports lev phases, and
-  `lev profile` measures repeated builds or arbitrary commands.
-- **Workspace operation:** `lev workspace shake` processes selected Lake
-  packages independently and emits one aggregate JSON or SARIF report.
+| Need | Typical Lake-only workflow | With lev |
+| --- | --- | --- |
+| Time one build | `time lake build` | `lev --timings build` separates lev phases from command time |
+| Compare repeated builds | Write a timing loop and calculate statistics | `lev profile` handles warmups, samples, summaries, and JSON |
+| Inspect module imports | Write a source or compiler-metadata script | `lev graph` emits text, JSON, or Graphviz DOT |
+| Run a release gate | Run build, test, and lint separately | `lev verify` adds lock, audit, toolchain, offline, and import checks |
+| Review updates | Run `lake update`, then inspect the manifest diff | `lev outdated` and transactional `lev upgrade --dry-run` |
+| Check several root projects | Loop over directories and combine failures | `lev workspace shake` keeps member transactions separate |
+| Hand off source | Maintain archive exclusions and metadata yourself | `lev bundle` writes a deterministic locked source archive |
+| Rebuild on edits | Add an editor or filesystem watcher | `lev watch` reruns a command in the selected environment |
 
-## Profiling, Verification, And Automation
+The Lake-only column describes common command-line practice, not a different
+build engine. lev eventually invokes the same project-defined Lake commands.
 
-Use global timings to see whether lev is spending time preparing the
-environment, acquiring locks, or running the requested command:
+### Timings And Repeated Profiles
+
+Start with `--timings` when a build feels slow. It answers the first
+useful question: was the time spent preparing the environment, waiting for a
+lock, or inside the delegated command? The phase report goes to stderr:
 
 ```console
 lev --timings build
-lev profile --warmup 1 --repeat 5 -- lake build
+lev --timings test
 ```
 
-`profile` runs in the selected Lean environment and reports every measured
-sample plus summary statistics. Add `--json` for automation, or combine
-`--json --output profile.json` to write that report to a file.
-
-Inspect the source-level module graph without crawling dependency build trees:
+If one run is not evidence enough, move to `profile`. It handles warmups and
+repeated samples instead of leaving a timing loop in shell history. It defaults
+to `lake build`; a command after `--` can replace that default.
 
 ```console
-lev graph MyProject.Main --external
+lev profile --warmup 1 --repeat 5
+lev profile --warmup 1 --repeat 5 -- lake build MyTarget
+lev profile --warmup 1 --repeat 5 --json -o profile.json -- lake build
+```
+
+The report includes every sample and the minimum, median, mean, and maximum.
+Warmups are run but not recorded. A failed command stops the profile and its
+exit code is preserved.
+
+### Import Graphs
+
+One import list is easy to read. Fifty of them are where intuition starts to
+lose. `graph` reads project source imports directly without crawling generated
+Lake build trees. Roots may be module names or Lean files, and may be repeated:
+
+```console
+lev graph MyProject.Main
+lev graph MyProject.Main MyProject.Tests --external
 lev graph MyProject.Main --external --format dot -o imports.dot
+dot -Tsvg imports.dot -o imports.svg
 lev graph MyProject.Main --format json -o imports.json
 ```
 
-Run the reproducibility checks as one ordered gate:
+Text output lists direct and transitive project-import counts. `--external`
+adds dependency modules. The `dot` command above is Graphviz, not part of lev.
+`graph` exits unsuccessfully when it finds an import cycle.
 
-```console
-lev verify --offline --test --lint --imports
+### One Verification Gate
+
+The most annoying release failure is often the check nobody remembered to run.
+`verify` turns that checklist into one ordered gate and stops at the first
+failure:
+
+```mermaid
+flowchart LR
+    A["lev.lock"] --> B["dependency audit"]
+    B --> C["toolchain"]
+    C --> D["lake build"]
+    D --> E["optional: test"]
+    E --> F["optional: lint"]
+    F --> G["optional: import drift"]
 ```
 
-`verify` checks the lock, dependency audit, selected toolchain, and build. The
-optional flags add a clean build, Lake test and lint drivers, and an import
-drift check. `--json` emits a phase-by-phase report.
+```console
+lev verify
+lev verify --clean --offline --strict --test --lint --imports
+lev verify --json > verify.json
+lev verify --offline --test -- MyLibrary
+```
 
-Review and apply dependency updates explicitly:
+The required phases are lock verification, dependency audit, toolchain
+availability, and `lake build`. The optional flags add a clean build, strict
+portability checks, the Lake test and lint drivers, and `lake shake` drift
+detection. Arguments after the options are passed to `lake build`.
+
+### Dependency Upgrades
+
+An upgrade should begin with a plan, not a mysterious manifest diff. Plain
+`lake update` remains available through `lev update`; for a reviewable
+Reservoir-aware transaction, preview the compatible direct-dependency changes
+first:
 
 ```console
 lev outdated
+lev outdated --check
+lev outdated --json > outdated.json
 lev upgrade --dry-run
-lev upgrade
+lev upgrade PACKAGE --dry-run
+lev upgrade PACKAGE
+lev upgrade --group algebra --dry-run
+lev upgrade --lean "$NEW_TOOLCHAIN" --dry-run
 ```
 
-For a configured monorepo, import minimization keeps each member's transaction
-separate while producing one report:
+`outdated` distinguishes current, outdated, incompatible, unmanaged, and
+unavailable dependencies. With `--check`, it exits with status 1 when a
+compatible update exists, which makes it suitable for CI.
+
+`upgrade` can target packages, a configured dependency group, or all indexed
+direct dependencies. The toolchain form plans compatible package changes with
+the Lean change. Changes are committed only after Lake resolves them and lev
+verifies the resulting revisions; failures restore the original project files.
+
+### Workspace Import Policy
+
+A five-line shell loop looks tempting in a monorepo until one member fails
+halfway through and the edits no longer have a clear owner. With `[workspace]`
+members in `lev.toml`, one command can check or minimize imports across
+independent Lake roots:
 
 ```console
-lev workspace shake --check --json --keep-going
+lev workspace shake --check --coverage --keep-going
+lev workspace shake --check --json --keep-going > imports.json
 lev workspace shake --check --sarif lev-shake.sarif --keep-going
-lev workspace shake --keep-public --keep-implied --apply --isolate --keep-going
+lev workspace shake \
+  --keep-public \
+  --keep-implied \
+  --apply \
+  --isolate \
+  --keep-going
 ```
 
-Create a deterministic source handoff, or keep a command running while source
-files change:
+Each member keeps its own toolchain, manifest, lock, and rollback boundary.
+JSON and SARIF combine the member results while retaining member-relative
+paths.
+
+### Deterministic Bundles
+
+A source handoff usually starts as a quick `tar` command and slowly acquires an
+exclusion list. `bundle` makes that policy part of lev instead:
 
 ```console
+lev lock --check
+lev bundle
 lev bundle -o project.lev.tar.zst
-lev watch -- lake build
-lev watch --exit-on-failure -- lake test
 ```
 
 `bundle` requires a current `lev.lock` and records file hashes in
 `lev-bundle.json`. It excludes Git state, `.lake`, dependency checkouts, and
-generated build trees; it is a portable locked source archive, not a vendored
-dependency or binary bundle. Repeating it over unchanged inputs produces
-byte-identical output.
+generated build trees. It is a portable source archive, not a vendored
+dependency or binary bundle. Unchanged inputs produce byte-identical output;
+an existing destination is not replaced unless `--force` is present.
 
-`watch` uses filesystem notifications, debounces bursts of edits, runs
-`lake build` initially by default, and ignores lev-managed lock and manifest
-writes so synchronization does not trigger a loop. Use `--no-initial` to wait
-for the first edit or `--max-runs N` for bounded automation.
+### Watch Mode
+
+For the edit loop, `watch` keeps the same selected environment between saves.
+It defaults to `lake build`, runs once immediately, then reruns after a
+debounced project-file change:
+
+```console
+lev watch
+lev watch -- lake test
+lev watch --debounce-ms 500 --exit-on-failure -- lake build MyTarget
+lev watch --no-initial --max-runs 10 -- lake build
+```
+
+It ignores lev-managed lock and manifest writes so synchronization does not
+trigger another run. `--no-initial` waits for the first edit, and
+`--max-runs` makes the loop bounded for automation.
+
+`profile`, `watch`, and `workspace shake` also accept `--lean` to select a
+locked environment, `--offline` to refuse network access, and `--no-sync` when
+the caller has already prepared the dependencies.
 
 ## Version Switching And Matrices
 
@@ -438,14 +553,15 @@ Run `lev --help` for the complete command list. The
 [documentation](https://robertboy18.github.io/lev/) contains examples and
 explains current limitations.
 
-Want your coding agent to use lev too? It is easy :) The
-[agent skill](https://github.com/robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md)
-in the `.agents` folder gives
-Codex, Claude Code, and other agents the same sync, lock, build, offline, and
-cache rules. You can tell an agent:
+The repository includes a
+[lev agent skill](https://github.com/robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md)
+for Codex, Claude Code, and other coding agents. It covers environment setup,
+builds, dependencies, import minimization, Lean and Mathlib source quality,
+and worktree safety. For agents that do not discover skills automatically, use
+this prompt:
 
 ```text
-Read .agents/skills/lev/SKILL.md, then use lev for this project.
+Read .agents/skills/lev/SKILL.md before working on this Lean project.
 ```
 
 ## Contributing

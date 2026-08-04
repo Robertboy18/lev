@@ -5,7 +5,7 @@
 //! These cases intentionally share one integration-test crate: the fake
 //! Lean/Lake/elan fixture and local HTTP server are substantial, while each
 //! test still receives an independent temporary root. Keeping one binary
-//! avoids recompiling and relinking the same harness for every command family.
+//! avoids recompiling and relinking the same test driver for every command family.
 
 use std::collections::BTreeMap;
 use std::fs;

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Automate Lean verification, upgrades, workspaces, bundles, and watch loops with lev.">
+    <title>Automation | lev</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css"><script defer src="vendor/highlight.min.js"></script><script defer src="vendor/highlightjs-lean.min.js"></script><script defer src="app.js"></script>
+  </head>
+  <body data-page="automation">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
+    <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
+    <div class="docs-shell">
+      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+        <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Imports &amp; graphs</a><a href="profiling.html" data-page-link="profiling">Profiling</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+      </nav></div></aside>
+      <main id="main-content"><div class="article-shell"><article class="article">
+        <header class="page-header"><p class="eyebrow">Core guide</p><h1>Verification and automation</h1><p class="lead">Turn the shell loops and release checklists around Lake into explicit, inspectable project workflows.</p></header>
+
+        <section id="verify"><h2>One ordered verification gate</h2>
+          <p>This part of lev began with the sort of release checklist that lives in shell history: check the lock, audit dependencies, build, test, lint, and remember the import check. The easiest check to miss is the one nobody wrote down. <code>lev verify</code> runs those gates in a stable order, stops at the first failure, and preserves delegated exit status.</p>
+          <figure class="diagram"><figcaption>Required phases run first; optional policy follows the build.</figcaption>
+            <div class="flow" role="img" aria-label="Verify checks lock, audit and toolchain, then builds, and optionally runs tests, lint and import drift checks">
+              <div class="flow-node"><strong>Lock</strong><span>configuration agrees</span></div>
+              <div class="flow-node"><strong>Audit + toolchain</strong><span>integrity and availability</span></div>
+              <div class="flow-node emphasis"><strong>Build</strong><span>lake build</span></div>
+              <div class="flow-node"><strong>Policy</strong><span>test, lint, imports</span></div>
+            </div>
+          </figure>
+          <div class="command-block"><div class="command-label">Release-style gate</div><pre><code>lev verify
+lev verify --clean --offline --strict --test --lint --imports
+lev verify --offline --test -- MyLibrary
+lev verify --json &gt; verify.json</code></pre></div>
+          <div class="command-block output-block"><div class="command-label">Captured verification report</div><pre><code>Build completed successfully.
+PASS  lock             0.436 ms  lev.lock matches project configuration and manifest
+PASS  audit            0.175 ms  3 passed, 0 warnings, 0 errors
+PASS  toolchain      142.340 ms  leanprover/lean4:v4.18.0 is available
+PASS  build          305.334 ms  lake build</code></pre></div>
+          <p class="example-caption">Captured on August 4, 2026 from a dependency-free Lean 4.18.0 project copied to local scratch. Optional test, lint, and import phases appear when their flags are present.</p>
+          <p><code>--clean</code> inserts <code>lake clean</code> before the build. <code>--strict</code> promotes audit portability warnings to failures. Arguments after the options are appended to <code>lake build</code>, not to test or lint.</p>
+          <h3>What a failed JSON gate records</h3>
+          <p>The report contains only phases that actually completed. If the build fails, test, lint, and imports do not appear as skipped successes; they are absent because lev stopped at the build boundary. The command returns Lake's exit code.</p>
+          <div class="command-block output-block"><div class="command-label">Captured verify.json after an unknown target</div><pre><code class="language-json">{
+  "schema": "lev.cli.verify/v1",
+  "data": {
+    "project": "/tmp/lev-doc-profile.GP0wJ1/project",
+    "toolchain": "leanprover/lean4:v4.18.0",
+    "status": "failed",
+    "phases": [
+      { "name": "lock", "status": "passed", "elapsed_ms": 0.434197,
+        "detail": "lev.lock matches project configuration and manifest" },
+      { "name": "audit", "status": "passed", "elapsed_ms": 0.17101,
+        "detail": "3 passed, 0 warnings, 0 errors" },
+      { "name": "toolchain", "status": "passed",
+        "elapsed_ms": 140.98253599999998,
+        "detail": "leanprover/lean4:v4.18.0 is available" },
+      { "name": "build", "status": "failed",
+        "elapsed_ms": 187.32274600000002,
+        "detail": "lake build MissingTarget exited with 1" }
+    ]
+  }
+}</code></pre></div>
+          <div class="command-block output-block"><div class="command-label">Compiler diagnostic on stderr</div><pre><code>error: unknown target `MissingTarget`</code></pre></div>
+          <p>With <code>--json</code>, the one JSON document stays on stdout while Lake diagnostics go to stderr. That lets CI save the report even when the gate fails without mixing compiler text into the JSON file.</p>
+        </section>
+
+        <section id="upgrade"><h2>Review dependency upgrades</h2>
+          <p>Plain <code>lev update</code> remains the direct Lake update path. For a reviewable Reservoir-aware transaction, separate discovery from application.</p>
+          <div class="steps">
+            <article><h3>Inspect compatible releases</h3><div class="command-block"><div class="command-label">Terminal</div><pre><code>lev outdated
+lev outdated --check
+lev outdated --json &gt; outdated.json</code></pre></div><p><code>--check</code> returns status 1 when a compatible update exists, which is useful for scheduled CI. The report distinguishes five states: <em>current</em>, <em>outdated</em> (a compatible newer release exists), <em>incompatible</em> (newer releases exist but none match the selected Lean), <em>unmanaged</em> (not resolvable through the Reservoir index, for example a plain Git dependency), and <em>unavailable</em> (the index could not be consulted). Only <em>outdated</em> entries trigger the <code>--check</code> exit code.</p></article>
+            <article><h3>Preview the transaction</h3><div class="command-block"><div class="command-label">Terminal</div><pre><code>lev upgrade --dry-run
+lev upgrade mathlib --dry-run
+lev upgrade --group algebra --dry-run
+lev upgrade --lean leanprover/lean4:v4.20.0 --dry-run</code></pre></div></article>
+            <article><h3>Apply deliberately</h3><div class="command-block"><div class="command-label">Terminal</div><pre><code>lev upgrade mathlib
+lev verify --test --lint</code></pre></div><p>The upgrade updates project state transactionally; project source compatibility still belongs to the subsequent build and tests.</p></article>
+          </div>
+          <aside class="warning"><strong>Compatibility metadata narrows the search.</strong> The project build and tests remain the proof obligation because a package release indexed for the selected Lean toolchain can still change APIs your project uses.</aside>
+        </section>
+
+        <section id="workspace"><h2>Operate on a workspace of Lake roots</h2>
+          <p>A lev workspace is an ordered set of independent Lake projects declared in the nearest ancestor <code>lev.toml</code>. Each member keeps its own toolchain, manifest, lock, and transaction boundary.</p>
+          <div class="command-block"><div class="command-label">lev.toml</div><pre><code class="language-toml">[workspace]
+members = [
+  "library",
+  "examples",
+  "benchmarks",
+]</code></pre></div>
+          <div class="command-block"><div class="command-label">Workspace commands</div><pre><code>lev workspace list
+lev workspace lock
+lev workspace lock --check
+lev workspace sync --frozen
+lev workspace build --offline --keep-going
+lev workspace run --keep-going -- lake test</code></pre></div>
+          <div class="command-block output-block"><div class="command-label">Workspace list</div><pre><code>benchmarks  leanprover/lean4:v4.18.0
+examples    leanprover/lean4:v4.19.0
+library     leanprover/lean4:v4.19.0</code></pre></div>
+          <p>Members run in deterministic path order. Without <code>--keep-going</code>, the first failing member stops the operation. With it, lev continues and returns the first failure code. The aggregate <code>lev-workspace.lock</code> is published only after every member sync succeeds, so it never describes a partial success as complete.</p>
+          <p>During a kept-going build, lev prints <code>lev: workspace build: MEMBER</code> before each member. If <code>examples</code> exits with status 37, lev still visits the later members and the workspace command finally returns 37. <code>--keep-going</code> finishes collecting results; it never converts a failed member into success.</p>
+          <p>Build, run, sync, and lock use human-readable progress and process exit codes. The two workspace JSON contracts are <code>workspace list --json</code> and <code>workspace shake --json</code>.</p>
+        </section>
+
+        <section id="workspace-shake"><h2>Minimize imports across the workspace</h2>
+          <div class="command-block"><div class="command-label">Conservative workspace policy</div><pre><code>lev workspace shake \
+  --check \
+  --keep-public \
+  --keep-implied \
+  --keep-going
+
+lev workspace shake \
+  --fix \
+  --isolate \
+  --keep-public \
+  --keep-implied \
+  --keep-going
+
+lev workspace shake --check --json &gt; workspace-shake.json
+lev workspace shake --check --sarif workspace-shake.sarif</code></pre></div>
+          <p>There are two kinds of isolation here. Each Lake member has its own source transaction, and <code>--isolate</code> can further separate accepted and rejected edits within a member. Aggregate JSON uses <code>lev.cli.workspace.shake/v1</code> and retains each member's exit code and report.</p>
+          <figure class="diagram"><figcaption>Workspace shake preserves independent failure boundaries.</figcaption>
+            <div class="flow" role="img" aria-label="One workspace policy is applied separately to library, examples and benchmarks projects, producing one aggregate report">
+              <div class="flow-node emphasis"><strong>Policy</strong><span>keep public + implied</span></div>
+              <div class="flow-node"><strong>library</strong><span>own transaction</span></div>
+              <div class="flow-node"><strong>examples</strong><span>own transaction</span></div>
+              <div class="flow-node"><strong>aggregate report</strong><span>member results</span></div>
+            </div>
+          </figure>
+        </section>
+
+        <section id="bundle"><h2>Create a deterministic source bundle</h2>
+          <p><code>lev bundle</code> creates a Zstandard-compressed tar archive of locked project sources. Generated trees and transient lev outputs are excluded, and repeated bundles from the same source state are deterministic.</p>
+          <div class="command-block"><div class="command-label">Bundle a handoff</div><pre><code>lev verify --offline
+lev bundle
+lev bundle --output artifacts/algebra-notes.lev.tar.zst
+lev bundle --force --output artifacts/algebra-notes.lev.tar.zst</code></pre></div>
+          <div class="command-block output-block"><div class="command-label">Captured bundle output</div><pre><code>lev: bundled 21 files (11237 source bytes) into /tmp/lev-doc-bundle-20260804.lev.tar.zst</code></pre></div>
+          <p class="example-caption">Captured on August 4, 2026 from the dependency-free scratch project used elsewhere in this manual.</p>
+          <p>The default destination is <code>&lt;project&gt;.lev.tar.zst</code> in the current directory. Existing destinations are refused unless <code>--force</code> is explicit. A bundle is a reproducible source handoff, not a replacement for Git history or a guarantee that the receiving machine already has every toolchain object.</p>
+        </section>
+
+        <section id="watch"><h2>Keep the selected environment in the edit loop</h2>
+          <div class="command-block"><div class="command-label">Watch examples</div><pre><code># Run lake build immediately, then after relevant changes
+lev watch
+
+# Check one file after edits settle for 400 ms
+lev watch --debounce-ms 400 -- \
+  lake env lean MyProject/Proof.lean
+
+# Useful in bounded automation
+lev watch --max-runs 5 --exit-on-failure -- lake test
+
+# Wait for the first edit
+lev watch --no-initial</code></pre></div>
+          <div class="command-block output-block"><div class="command-label">Captured one-run watch session</div><pre><code>lev: watching /tmp/lev-doc-profile.GP0wJ1/project and running `lake build`
+lev: watch run: lake build
+Build completed successfully.</code></pre></div>
+          <p class="example-caption">Captured with <code>lev watch --max-runs 1 --no-sync --offline</code> on August 4, 2026. The run bound lets the example finish without waiting for a file edit.</p>
+          <p>The watcher is event-driven and debounced. It ignores generated and dependency trees such as <code>.git</code>, <code>.lake</code>, <code>build</code>, <code>lake-packages</code>, and <code>target</code>, as well as lock outputs produced by the run itself. A failed command normally leaves the watcher alive so the next edit can repair it; <code>--exit-on-failure</code> changes that behavior.</p>
+        </section>
+
+        <section id="tasks"><h2>Project tasks and scripts</h2>
+          <p>Tasks give repeated project commands a versioned name without hiding the underlying process.</p>
+          <div class="code-pair">
+            <div class="command-block"><div class="command-label">lev.toml</div><pre><code class="language-toml">[tasks]
+docs = ["lake", "build", "Documentation"]
+smoke = ["lake", "test", "--", "smoke"]</code></pre></div>
+            <div class="command-block"><div class="command-label">Terminal</div><pre><code>lev task
+lev task docs
+lev task smoke -- --seed 42</code></pre></div>
+          </div>
+          <p>Everything after the task name and <code>--</code> is appended to the configured command, so a task can stay minimal while callers add options per run. <code>lev task</code> with no name lists the configured tasks, which makes the available automation discoverable from the checkout itself.</p>
+          <p>For a single Lean file outside a permanent package, <code>lev script</code> can build a cached inline environment from metadata in the file. Use a normal Lake package once the code has multiple modules, public targets, or a release lifecycle.</p>
+          <div class="code-pair">
+            <div class="command-block lean-block"><div class="command-label">Script with inline metadata</div><pre><code class="language-lean">-- /// lev
+-- lean = "leanprover/lean4:v4.19.0"
+-- [[dependencies]]
+-- name = "mathlib"
+-- scope = "leanprover-community"
+-- ///
+
+import Mathlib.Data.Nat.Prime.Basic
+
+#eval Nat.minFac 91</code></pre></div>
+            <div class="command-block"><div class="command-label">Terminal</div><pre><code>lev script run Example.lean
+lev script check Example.lean</code></pre></div>
+          </div>
+          <p>The inline block declares the toolchain and dependencies the file needs. lev materializes a cached environment for that combination, so the second run of the same script skips the setup cost. <code>check</code> elaborates without running.</p>
+        </section>
+
+        <section id="inspect"><h2>Inspect the dependency graph</h2>
+          <p>Three commands answer the questions that otherwise require reading <code>lake-manifest.json</code> by eye. All of them read recorded state; none of them modifies the project.</p>
+          <div class="command-block"><div class="command-label">Terminal</div><pre><code># Flat inventory recorded by the manifest
+lev deps
+
+# Resolved dependency tree with revisions
+lev tree
+
+# Which requirement chain pulls this package in?
+lev why batteries</code></pre></div>
+          <div class="command-block output-block"><div class="command-label">Why output</div><pre><code>mathlib -&gt; batteries</code></pre></div>
+          <p><code>why</code> is the one to reach for when a package appears in the manifest that nobody remembers adding: it prints the requirement chain from a direct dependency down to the package in question.</p>
+        </section>
+
+        <section id="audit-sbom"><h2>Audit integrity and export an SBOM</h2>
+          <p><code>lev audit</code> checks that local state still matches what the lock recorded: lock consistency, toolchain integrity, and dependency checkout hashes. It reads and verifies; it never repairs silently.</p>
+          <div class="command-block"><div class="command-label">Terminal</div><pre><code>lev audit
+lev audit --json &gt; audit.json
+
+# Dependency inventory for compliance tooling
+lev export --format cyclonedx -o lev-sbom.json</code></pre></div>
+          <p>The CycloneDX export lists the exact resolved dependencies from the locked environment, which lets standard supply-chain tooling consume a Lean project without a custom parser. <code>audit --json</code> uses the <code>lev.cli.audit/v1</code> envelope, and <code>verify</code> runs the same audit as its second phase.</p>
+        </section>
+
+        <section id="ci"><h2>A compact CI example</h2>
+          <div class="command-block"><div class="command-label">GitHub Actions step</div><pre><code class="language-yaml">- name: Verify locked Lean project
+  run: |
+    lev sync --frozen
+    lev verify --offline --strict --test --lint --imports
+    lev bundle --output artifacts/source.lev.tar.zst
+
+- name: Save verification report
+  if: always()
+  run: lev verify --offline --json &gt; artifacts/verify.json</code></pre></div>
+          <p>In a real workflow, install lev at a reviewed revision and restore the configured lev cache before <code>sync</code>. Keep the JSON report even on failure; it records which phase established the boundary.</p>
+        </section>
+
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="profiling.html"><small>Previous</small><strong>Profiling</strong></a><a href="reference.html"><small>Next</small><strong>Command reference</strong></a></nav>
+        <footer class="site-footer"><p>Automation reports use versioned <code>{ schema, data }</code> envelopes so consumers can reject unknown contracts explicitly.</p></footer>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#verify">Verify</a><a href="#upgrade">Upgrade</a><a href="#workspace">Workspace</a><a href="#workspace-shake">Workspace shake</a><a href="#bundle">Bundle</a><a href="#watch">Watch</a><a href="#tasks">Tasks and scripts</a><a href="#inspect">Dependency graph</a><a href="#audit-sbom">Audit and SBOM</a><a href="#ci">CI example</a></nav></div></main>
+    </div>
+  </body>
+</html>

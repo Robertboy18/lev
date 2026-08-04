@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# End-to-end compatibility harness used by CI and local release checks. The
+# End-to-end compatibility script used by CI and local release checks. The
 # caller supplies selectors; keeping that list outside the script lets this
 # exercise future releases, RCs, nightlies, and custom elan identifiers.
 #

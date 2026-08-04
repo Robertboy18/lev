@@ -21,7 +21,7 @@ LEV_MATRIX_VERSIONS="stable nightly" \
 ```
 
 `LEV_MATRIX_VERSIONS` accepts any whitespace-separated releases, RCs,
-nightlies, or complete elan toolchain identifiers. The harness intentionally
+nightlies, or complete elan toolchain identifiers. The compatibility script
 has no built-in release list.
 
 ## Layout

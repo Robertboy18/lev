@@ -3,99 +3,77 @@ name: lev
 description: Use lev to initialize, synchronize, lock, build, test, run, inspect, and troubleshoot Lean 4 and Lake projects. Use when working with lean-toolchain, lakefile.toml, lakefile.lean, lake-manifest.json, lev.lock, or lev.toml; when changing Lean toolchains or dependencies; or when a task would otherwise call lean, lake, or elan directly.
 ---
 
-# Work With lev
+# Use lev in Lean Projects
 
-Use lev as the project-level entry point while keeping Lean and Lake files
-authoritative. Let lev prepare the selected toolchain and dependency
-environment, then let Lake perform compilation and tests.
+Use lev for project and environment operations. Keep Lean, Lake, and the
+project's own files authoritative: lev prepares the environment, while Lake
+still defines and runs the build.
 
-## Inspect The Project
+## Start From The Repository
 
-1. Locate the nearest directory containing `lean-toolchain` and a
-   `lakefile.toml` or `lakefile.lean`. Work there, or pass `--project PATH`.
-2. Read the project README, `lean-toolchain`, Lakefile, and `lev.toml` before
-   changing the environment.
-3. Run `lev --version` and `lev doctor` when availability or host setup is in
-   doubt.
-4. Respect the toolchain in `lean-toolchain`. Do not change it unless the task
-   explicitly requires a project-wide version change.
+1. Find the nearest directory containing `lean-toolchain` and a Lakefile. Work
+   there or pass `--project PATH`.
+2. Read the repository instructions, README, `lean-toolchain`, Lakefile, and
+   `lev.toml` before changing the environment.
+3. Inspect the worktree before editing. Preserve unrelated user changes.
+4. Run `lev --version` and `lev doctor` if the host setup is uncertain.
 
-Do not require `lev.toml`; ordinary Lake projects work without it.
+Do not require `lev.toml`; ordinary Lake projects work without it. Do not
+change `lean-toolchain` unless the task calls for a project-wide upgrade.
 
-## Use The Normal Workflow
+## Build And Check
 
-Use these commands for routine work:
+Use the narrowest command that proves the current change:
 
 ```console
-lev build
-lev test
 lev check Path/To/File.lean
-lev run lake env lean --version
-```
-
-`lev build`, `lev test`, `lev check`, and `lev run` synchronize first unless
-`--no-sync` is passed. Do not run a separate synchronization before every
-command once the environment is ready.
-
-For explicit setup, use `lev sync --locked` when the repository already
-commits `lake-manifest.json`. Use `lev sync` only when the project intentionally
-needs Lake to create its first manifest. Never edit `lake-manifest.json` by
-hand.
-
-Pass Lake targets and options through the lev command:
-
-```console
-lev build MyTarget
-lev test -- --some-lake-option
+lev build Target
+lev test
+lev lint
 lev run lake COMMAND
 ```
 
-Use `lev --local build` when a checkout is on slow storage and a persistent
-cache-local execution workspace is appropriate.
+These commands synchronize first unless `--no-sync` is present. Do not run a
+separate `lev sync` before every build. Pass Lake targets and options through
+the corresponding lev command.
 
-## Keep Runs Reproducible
+Use `lev --local build` when the checkout is on slow shared storage and the
+lev cache points to suitable local scratch.
 
-Create or refresh locks only when the task calls for an environment change:
+## Keep Environments Reproducible
+
+Use committed manifests and locks as the repository expects:
 
 ```console
-lev lock
 lev lock --check
+lev sync --locked
 lev sync --frozen
 lev build --offline
 ```
 
-- Commit `lev.lock` alongside `lake-manifest.json` when that is the
-  repository's policy.
-- Use `--frozen` to reject lock/configuration drift.
-- Use `--offline` only when all required toolchains and dependencies should
+- Use `--locked` when `lake-manifest.json` must already exist.
+- Use `--frozen` to reject configuration or lock drift.
+- Use `--offline` only when every required toolchain and dependency should
   already be local.
-- Do not use `--update`, `lev update`, or `lev lock --refresh` during an
-  unrelated source change.
+- Do not update locks or dependencies during an unrelated source change.
+- Never edit `lake-manifest.json` by hand.
 
-## Select Toolchains Deliberately
-
-Use any user-supplied release, channel, nightly, or complete elan identifier;
-never substitute a hardcoded version.
+Select an alternate locked environment without rewriting `lean-toolchain`:
 
 ```console
+lev lock --lean "$TOOLCHAIN"
 lev build --lean "$TOOLCHAIN"
 lev test --lean "$TOOLCHAIN"
-lev lock --lean "$TOOLCHAIN"
 ```
 
-Use `--lean` for a temporary environment without rewriting
-`lean-toolchain`. Run `lev use TOOLCHAIN`, `lev pin TOOLCHAIN`, or
-`lev upgrade --lean TOOLCHAIN` only when asked to change project state, and
-inspect the resulting diff.
+Accept any user-supplied release, nightly, channel, or complete toolchain
+identifier. Do not replace it with a hardcoded version. Use `lev use`,
+`lev pin`, or `lev upgrade --lean` only when the user intends to change
+project state.
 
-Use `lev matrix` only for an explicitly requested multi-toolchain CI check.
-Pass each requested selector with `--lean`; do not invent a default version
-list.
+## Manage Dependencies
 
-## Manage Dependencies Carefully
-
-Use lev's transactional dependency commands for declarative
-`lakefile.toml` projects:
+For a declarative `lakefile.toml`, use lev's transactional commands:
 
 ```console
 lev add PACKAGE --scope OWNER
@@ -107,141 +85,125 @@ lev outdated
 lev upgrade PACKAGE --dry-run
 ```
 
-- Preserve the package name, owner, URL, revision, and compatibility policy
-  given by the user or project documentation.
-- Never infer a registry owner or revision from a package name.
-- Omitting `--rev` delegates selection to Reservoir and Lake; it does not
-  select a lev-specific or hardcoded release.
-- Do not mechanically rewrite executable `lakefile.lean` files. Follow the
-  project's existing Lean configuration style when a manual edit is required.
-- Inspect the Lakefile, `lake-manifest.json`, and `lev.lock` diff after any
-  dependency change.
-- Run package-specific helpers such as `lev run lake exe cache get` only when
-  that package's documentation requests them. Do not assume Mathlib or any
-  other dependency is present.
+Preserve the package source and revision requested by the user or repository.
+Do not infer a registry owner or revision from a package name. Inspect the
+Lakefile, manifest, and lock diff after a dependency change.
 
-## Minimize Imports Safely
+Do not mechanically rewrite executable `lakefile.lean` files. Do not assume
+Mathlib is installed. Run package-specific helpers such as
+`lev run lake exe cache get` only when that package's documentation calls for
+them.
 
-Preview compiler-derived import changes, then apply them:
+## Write Maintainable Lean
+
+Follow repository conventions first, then current Lean and Mathlib conventions.
+Use any dedicated Lean or Mathlib skill supplied by the repository alongside
+this one; lev governs the environment, not theorem design.
+
+- Search nearby code and the pinned dependencies before inventing a definition
+  or theorem.
+- Verify declaration names in the active environment. Do not guess Mathlib
+  APIs from memory.
+- Preserve theorem statements, names, namespaces, and public APIs unless the
+  task explicitly changes them.
+- Prefer the narrow imports used by nearby files. Do not add `import Mathlib`
+  merely to make elaboration succeed.
+- Check difficult proof steps against the compiler as they are written. Finish
+  with the relevant `lev check`, `lev build`, `lev test`, or `lev lint`.
+- Leave no `sorry`, `admit`, exploratory `#check` or `#print`, trace setting,
+  suggestion tactic, or unapproved axiom in finished work.
+- Keep comments scarce and specific. Explain a mathematical idea or a
+  non-obvious design decision; do not narrate tactics or the editing process.
+- Write docstrings as library documentation, not as a transcript of how the
+  code was generated.
+
+## Write Like A Maintainer
+
+When changing README files, guides, examples, or release notes, keep the
+technical details exact without flattening the writing into a feature list.
+
+- Start with the situation a Lean developer recognizes, then introduce the
+  command that helps.
+- Explain why a workflow exists, not only what each flag does.
+- Use verified project stories, failed attempts, and measured results when
+  they teach something. Never invent an anecdote, benchmark, or motivation.
+- Vary sentence rhythm and section openings. Avoid repeating templates such as
+  "Use X to Y" or "This command provides."
+- First person is fine for genuine project rationale; conversational phrasing
+  is fine when it makes the explanation easier to follow.
+- Keep reference tables, safety guarantees, exit behavior, and command examples
+  direct. Personality must not blur a contract.
+- Read the prose aloud once. Remove filler, inflated claims, fake excitement,
+  and phrases that could describe any developer tool.
+
+## Minimize Imports
+
+Preview compiler-derived changes before applying them:
 
 ```console
 lev imports MyProject.Module --explain
 lev imports MyProject.Module --apply
 ```
 
-For example, given:
+`lev imports` aliases `lev shake`. A dry run exits with status 1 when it finds
+changes. Applying changes snapshots the affected sources, rebuilds them, and
+restores the originals if verification fails.
 
-```lean
-module
-
-public import Mathlib
-
-public theorem five_is_prime : Nat.Prime 5 := Nat.prime_five
-```
-
-the preview can replace the broad public import with a public
-`Mathlib.Data.Nat.Prime.Defs` import plus private compile-time dependencies.
-The private list may contain tactic or elaborator modules that are not obvious
-from the theorem text; keep Lake's complete result.
-
-`lev imports` is an alias for `lev shake`. The dry run exits with status 1
-when suggestions exist. `--fix` or `--apply` snapshots the affected project
-sources, builds package defaults and requested module roots, and restores the
-sources if verification fails. Verification bypasses Lake's artifact cache and
-checks that the resulting `.olean` files are fresh.
-Use `--keep-public` for aggregator modules whose imports are intentionally part
-of their downstream API. Do not use `--force` unless analyzing stale compiled
-metadata is explicitly acceptable.
-
-For a reusable library, begin with:
+For a reusable library, preserve public and implied imports on the first pass:
 
 ```console
 lev imports --keep-public --keep-implied --explain
 lev imports --keep-public --keep-implied --apply
 ```
 
-Preserve a namespace-only or otherwise untraced dependency with
-`import Some.Module -- shake: keep`.
+The replacement may include private syntax, tactic, instance, or elaborator
+modules that are not visible in the theorem text. Keep Lake's complete result.
+Preserve an intentionally untraced dependency with:
 
-For large batches, isolate failures instead of repeatedly changing policy by
-hand:
-
-```console
-lev imports --keep-public --keep-implied --fix --isolate
+```lean
+import Some.Module -- shake: keep
 ```
 
-lev verifies the restored baseline before isolation. It keeps passing edit
-groups, restores rejected files, prints candidate `-- shake: keep`
-annotations, and exits with status 1 for a partial result. If the baseline
-itself fails, it restores every source and keeps no edits.
+Use `--isolate` for a large batch so independently verified edits can survive
+a failing subset. Use `--check --coverage` in CI. Avoid `--force` unless stale
+compiled metadata is explicitly acceptable.
 
-Use the explicit check and coverage modes in automation:
+## Inspect And Automate
 
-```console
-lev imports --check --coverage
-lev imports --check --coverage --json
-```
-
-`--coverage` classifies project Lean files as analyzed, outside the selected
-roots, or legacy files without a leading `module` command. `--json` owns stdout
-and emits the versioned `lev.cli.shake/v1` envelope; Lake diagnostics remain on
-stderr.
-
-## Measure And Automate
-
-Use phase timings for one run and profiling for repeated measurements:
+Use one-run timings or repeated profiles when measurements are requested:
 
 ```console
 lev --timings build
 lev profile --warmup 1 --repeat 5 -- lake build
-lev profile --warmup 1 --repeat 5 --json --output profile.json -- lake build
 ```
 
-Timings are written to stderr. Profile JSON uses the
-`lev.cli.profile/v1` envelope; keep profiled command output separate from that
-report.
+Use `lev graph MODULE` for source-level project imports. Add `--external` only
+when dependency edges matter, and select `--format json` or `--format dot` for
+machine-readable output.
 
-Inspect source-level imports without traversing generated Lake trees:
-
-```console
-lev graph MyProject.Main --external
-lev graph MyProject.Main --external --format dot --output imports.dot
-lev graph MyProject.Main --format json --output imports.json
-```
-
-Use the ordered verification gate when the task calls for project-wide
-reproducibility checks:
+Use the ordered verification gate for project-wide checks:
 
 ```console
 lev verify --offline --test --lint --imports
-lev verify --offline --json
 ```
 
-Verification always checks `lev.lock`, dependency integrity, the selected
-toolchain, and the build. Add clean, test, lint, and import gates only when
-their cost and source effects are appropriate for the task.
-
-For a configured monorepo, process each member transactionally and keep one
-machine-readable report:
+For a configured monorepo, apply import policy per member and emit one report:
 
 ```console
 lev workspace shake --check --json --keep-going
 lev workspace shake --check --sarif lev-shake.sarif --keep-going
-lev workspace shake --keep-public --keep-implied --apply --isolate --keep-going
 ```
 
-Create a locked source handoff with `lev bundle --output project.lev.tar.zst`.
-The archive excludes dependencies and generated outputs; do not describe it as
-a vendored or binary bundle. Use `--force` only when replacing an existing
-archive is intentional.
+Use `lev bundle -o project.lev.tar.zst` for a deterministic locked source
+archive. It excludes dependency checkouts and generated outputs; it is not a
+vendored or binary bundle.
 
-Use `lev watch -- lake build` for an explicitly requested interactive edit
-loop. Prefer `--max-runs N` for bounded automation, and do not leave a watch
-process running after the task is complete.
+Use `lev watch -- lake build` only for an interactive edit loop. Bound
+automated runs with `--max-runs N`, and stop the watcher before finishing.
 
 ## Diagnose Failures
 
-Start with the narrowest relevant command, then inspect the environment:
+Start with the failed command, then inspect the relevant state:
 
 ```console
 lev --verbose build
@@ -254,24 +216,17 @@ lev cache status
 lev cache verify
 ```
 
-Treat a Lean elaboration error, test failure, or Lake target failure as a
-project failure unless lev failed while selecting the toolchain,
-synchronizing dependencies, or restoring artifacts. Report the underlying
-command and first useful error instead of describing every later failure.
-
-Use `lev build --rehash` when stale Lake hash sidecars are a plausible cause.
-Do not delete `.lake`, dependency checkouts, locks, or shared cache entries as
+Report the first useful Lean, Lake, toolchain, dependency, or cache error.
+Use `lev build --rehash` only when stale Lake hash sidecars are plausible.
+Do not delete `.lake`, locks, dependency checkouts, or shared cache entries as
 a first diagnostic step.
 
 ## Protect User State
 
-- Preserve dirty source and dependency checkouts. Never reset or clean them
-  to make synchronization pass.
-- Avoid `lev clean`, `lev cache gc --apply`, `lev tool gc --apply`,
-  publication, remote cache pushes, self-updates, and self-uninstallation
-  unless explicitly requested.
-- Treat `lev cache gc` without `--apply` as a preview; review it before
-  deletion.
-- Keep normal Lean files usable with `lean`, `lake`, and `elan`. Do not
-  introduce a lev-only project format when standard files are sufficient.
-- Read `lev COMMAND --help` before using an unfamiliar or mutating command.
+- Preserve dirty source and dependency checkouts. Do not reset or clean them to
+  make a command pass.
+- Treat garbage collection without `--apply` as a preview.
+- Do not publish, push remote caches, self-update, uninstall, or run destructive
+  cleanup unless the user explicitly asks.
+- Read `lev COMMAND --help` before using an unfamiliar mutating command.
+- Inspect the final diff and report the commands actually run.

@@ -27,9 +27,9 @@ fn checked_in_release_surfaces_do_not_pin_concrete_lean_versions() {
         );
     }
 
-    let harness = root.join("scripts/test-lean-matrix.sh");
-    if harness.is_file() {
-        let source = fs::read_to_string(harness).unwrap();
+    let matrix_script = root.join("scripts/test-lean-matrix.sh");
+    if matrix_script.is_file() {
+        let source = fs::read_to_string(matrix_script).unwrap();
         assert!(source.contains("LEV_MATRIX_VERSIONS is required"));
         assert!(source.contains(r#"project="$ROOT/project-$index""#));
         assert!(!source.contains(r#"project="$ROOT/lean-$version""#));
