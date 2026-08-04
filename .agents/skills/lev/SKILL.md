@@ -187,6 +187,58 @@ roots, or legacy files without a leading `module` command. `--json` owns stdout
 and emits the versioned `lev.cli.shake/v1` envelope; Lake diagnostics remain on
 stderr.
 
+## Measure And Automate
+
+Use phase timings for one run and profiling for repeated measurements:
+
+```console
+lev --timings build
+lev profile --warmup 1 --repeat 5 -- lake build
+lev profile --warmup 1 --repeat 5 --json --output profile.json -- lake build
+```
+
+Timings are written to stderr. Profile JSON uses the
+`lev.cli.profile/v1` envelope; keep profiled command output separate from that
+report.
+
+Inspect source-level imports without traversing generated Lake trees:
+
+```console
+lev graph MyProject.Main --external
+lev graph MyProject.Main --external --format dot --output imports.dot
+lev graph MyProject.Main --format json --output imports.json
+```
+
+Use the ordered verification gate when the task calls for project-wide
+reproducibility checks:
+
+```console
+lev verify --offline --test --lint --imports
+lev verify --offline --json
+```
+
+Verification always checks `lev.lock`, dependency integrity, the selected
+toolchain, and the build. Add clean, test, lint, and import gates only when
+their cost and source effects are appropriate for the task.
+
+For a configured monorepo, process each member transactionally and keep one
+machine-readable report:
+
+```console
+lev workspace shake --check --json --keep-going
+lev workspace shake --check --sarif lev-shake.sarif --keep-going
+lev workspace shake --keep-public --keep-implied --apply --isolate --keep-going
+```
+
+Create a locked source handoff with `lev bundle --output project.lev.tar.zst`.
+The archive excludes dependencies and generated outputs; do not describe it as
+a vendored or binary bundle. Use `--force` only when replacing an existing
+archive is intentional.
+
+Use `lev watch -- lake build` for an explicitly requested interactive edit
+loop. Prefer `--max-runs N` for bounded automation, and do not leave a watch
+process running after the task is complete.
+
 ## Diagnose Failures
 
 Start with the narrowest relevant command, then inspect the environment:

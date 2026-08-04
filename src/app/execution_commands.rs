@@ -5,6 +5,7 @@
 
 use std::ffi::OsString;
 use std::process::{Command, ExitStatus};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 
@@ -168,8 +169,12 @@ pub(super) fn prepared_project(
     no_sync: bool,
     offline: bool,
 ) -> Result<Project> {
+    let select_started = Instant::now();
     let (project, publish_locks) = select_project(context, source, selector, no_sync, offline)?;
+    context.timing("environment", select_started);
+    let prepare_started = Instant::now();
     prepare_execution(context, source, &project, no_sync, offline, publish_locks)?;
+    context.timing("prepare", prepare_started);
     Ok(project)
 }
 
@@ -240,15 +245,15 @@ pub(super) fn run_in_project(
     args: &[OsString],
     install_toolchain: bool,
 ) -> Result<i32> {
+    let lock_started = Instant::now();
     let _dependency_environment = dependency_env::lock_attached(&context.cache, project)?;
     let _artifact_cache = lake_artifact_cache::lock_shared(&context.cache, &project.toolchain)?;
     registry::record(&context.cache, project)?;
-    Ok(exit_code(run_unlocked_in_project(
-        context,
-        project,
-        args,
-        install_toolchain,
-    )?))
+    context.timing("locks", lock_started);
+    let command_started = Instant::now();
+    let status = run_unlocked_in_project(context, project, args, install_toolchain)?;
+    context.timing("command", command_started);
+    Ok(exit_code(status))
 }
 
 fn run_unlocked_in_project(

@@ -3,8 +3,10 @@
 //! The nearest `lean-toolchain` file defines the project root.
 
 pub(crate) mod audit;
+pub(crate) mod bundle;
 pub(crate) mod config;
 pub(crate) mod export;
+pub(crate) mod import_graph;
 pub(crate) mod lakefile;
 pub(crate) mod local_workspace;
 pub(crate) mod lockfile;

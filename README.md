@@ -283,23 +283,89 @@ a repeatable fixed point on a large formalization.
 
 ### What the FLT Run Changed
 
-The first three follow-ups from the FLT run are now available:
+The follow-ups from the FLT run are now available:
 
 - **Failure isolation:** `--fix --isolate` keeps verified subsets, restores
   rejected files, and suggests likely `-- shake: keep` annotations.
 - **Coverage reports:** `--coverage` lists analyzed module files, files outside
   the selected roots, and legacy files without a module header.
-- **First-class CI output:** `--check --json` reports import drift through the
-  stable `lev.cli.shake/v1` envelope.
+- **CI output:** `--check --json` emits the stable `lev.cli.shake/v1` envelope,
+  while `--check --sarif lev-shake.sarif` writes review annotations.
+- **Import graph inspection:** `lev graph` reports direct and transitive module
+  relationships as text, JSON, or Graphviz DOT.
+- **Measured execution:** global `--timings` reports lev phases, and
+  `lev profile` measures repeated builds or arbitrary commands.
+- **Workspace operation:** `lev workspace shake` processes selected Lake
+  packages independently and emits one aggregate JSON or SARIF report.
 
-The remaining roadmap is:
+## Profiling, Verification, And Automation
 
-- **SARIF output:** convert rejected edits and import drift into review
-  annotations.
-- **Before-and-after metrics:** report direct and transitive import counts,
-  affected modules, and optional measured build or elaboration time.
-- **Workspace operation:** minimize every selected Lake package with
-  per-project transactions and one aggregate report.
+Use global timings to see whether lev is spending time preparing the
+environment, acquiring locks, or running the requested command:
+
+```console
+lev --timings build
+lev profile --warmup 1 --repeat 5 -- lake build
+```
+
+`profile` runs in the selected Lean environment and reports every measured
+sample plus summary statistics. Add `--json` for automation, or combine
+`--json --output profile.json` to write that report to a file.
+
+Inspect the source-level module graph without crawling dependency build trees:
+
+```console
+lev graph MyProject.Main --external
+lev graph MyProject.Main --external --format dot -o imports.dot
+lev graph MyProject.Main --format json -o imports.json
+```
+
+Run the reproducibility checks as one ordered gate:
+
+```console
+lev verify --offline --test --lint --imports
+```
+
+`verify` checks the lock, dependency audit, selected toolchain, and build. The
+optional flags add a clean build, Lake test and lint drivers, and an import
+drift check. `--json` emits a phase-by-phase report.
+
+Review and apply dependency updates explicitly:
+
+```console
+lev outdated
+lev upgrade --dry-run
+lev upgrade
+```
+
+For a configured monorepo, import minimization keeps each member's transaction
+separate while producing one report:
+
+```console
+lev workspace shake --check --json --keep-going
+lev workspace shake --check --sarif lev-shake.sarif --keep-going
+lev workspace shake --keep-public --keep-implied --apply --isolate --keep-going
+```
+
+Create a deterministic source handoff, or keep a command running while source
+files change:
+
+```console
+lev bundle -o project.lev.tar.zst
+lev watch -- lake build
+lev watch --exit-on-failure -- lake test
+```
+
+`bundle` requires a current `lev.lock` and records file hashes in
+`lev-bundle.json`. It excludes Git state, `.lake`, dependency checkouts, and
+generated build trees; it is a portable locked source archive, not a vendored
+dependency or binary bundle. Repeating it over unchanged inputs produces
+byte-identical output.
+
+`watch` uses filesystem notifications, debounces bursts of edits, runs
+`lake build` initially by default, and ignores lev-managed lock and manifest
+writes so synchronization does not trigger a loop. Use `--no-initial` to wait
+for the first edit or `--max-runs N` for bounded automation.
 
 ## Version Switching And Matrices
 
@@ -359,8 +425,12 @@ Garbage collection is a dry run until `--apply` is present.
 lev add PACKAGE --scope OWNER
 lev run lake env my-tool
 lev shake MyProject.Proof --fix
+lev graph MyProject.Proof --external
+lev verify --offline --imports
+lev bundle -o project.lev.tar.zst
+lev watch -- lake build
 lev script run Example.lean
-lev workspace build --keep-going
+lev workspace shake --check --sarif lev-shake.sarif --keep-going
 lev export --format cyclonedx -o lev-sbom.json
 ```
 

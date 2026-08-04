@@ -5,7 +5,9 @@
 
 use anyhow::{Context, Result};
 
-use crate::cli::{BuildArgs, ExecutionArgs, RunArgs, SyncArgs, WorkspaceCommand};
+use crate::cli::{
+    BuildArgs, ExecutionArgs, RunArgs, SyncArgs, WorkspaceCommand, WorkspaceShakeArgs,
+};
 use crate::core::json_output::{self, schema};
 use crate::project::lockfile;
 use crate::project::workspace::{ProjectWorkspace, WorkspaceMember};
@@ -28,6 +30,22 @@ struct WorkspaceListingMember {
     path: String,
     root: String,
     toolchain: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct WorkspaceShakeReport {
+    root: String,
+    members: Vec<WorkspaceShakeMember>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct WorkspaceShakeMember {
+    path: String,
+    exit_code: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<super::shake_commands::ShakeReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 /// Dispatch a command across the deterministic member set declared by the
@@ -166,7 +184,75 @@ pub(super) fn workspace_command(context: &AppContext, command: WorkspaceCommand)
                 |member_context, _| run_command(member_context, run_args.clone()),
             )
         }
+        WorkspaceCommand::Shake(args) => workspace_shake(context, &workspace, args),
     }
+}
+
+fn workspace_shake(
+    context: &AppContext,
+    workspace: &ProjectWorkspace,
+    args: WorkspaceShakeArgs,
+) -> Result<i32> {
+    let mut members = Vec::with_capacity(workspace.members.len());
+    let mut first_failure = None;
+    for member in &workspace.members {
+        context.info(format!("workspace shake: {}", member.relative));
+        let member_context = context.for_project(&member.project.root);
+        match super::shake_commands::shake_outcome(&member_context, &args.shake) {
+            Ok(outcome) => {
+                if !args.shake.json && args.shake.sarif.is_none() {
+                    super::shake_commands::emit_report(&args.shake, &outcome.report)?;
+                }
+                if outcome.code != 0 {
+                    first_failure.get_or_insert(outcome.code);
+                }
+                let failed = outcome.code != 0;
+                members.push(WorkspaceShakeMember {
+                    path: member.relative.clone(),
+                    exit_code: outcome.code,
+                    report: Some(outcome.report),
+                    error: None,
+                });
+                if failed && !args.keep_going {
+                    break;
+                }
+            }
+            Err(error) => {
+                if !args.keep_going {
+                    return Err(error)
+                        .with_context(|| format!("workspace member {}", member.relative));
+                }
+                eprintln!("{}: {error:#}", member.relative);
+                first_failure.get_or_insert(1);
+                members.push(WorkspaceShakeMember {
+                    path: member.relative.clone(),
+                    exit_code: 1,
+                    report: None,
+                    error: Some(format!("{error:#}")),
+                });
+            }
+        }
+    }
+    if args.shake.json {
+        json_output::print(
+            schema::WORKSPACE_SHAKE,
+            &WorkspaceShakeReport {
+                root: workspace.root.display().to_string(),
+                members,
+            },
+        )?;
+    } else if let Some(path) = &args.shake.sarif {
+        super::shake_commands::write_workspace_sarif(
+            path,
+            members.iter().filter_map(|member| {
+                member
+                    .report
+                    .as_ref()
+                    .map(|report| (member.path.as_str(), report))
+            }),
+        )?;
+    }
+    Ok(first_failure.unwrap_or(0))
 }
 
 /// Run members in path order and preserve the first child exit status.

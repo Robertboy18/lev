@@ -54,6 +54,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub local: bool,
 
+    /// Print elapsed time for the command and recorded execution phases.
+    #[arg(long, global = true)]
+    pub timings: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -123,6 +127,21 @@ pub enum Command {
     /// Infer and optionally apply minimal Lean imports.
     #[command(visible_alias("imports"))]
     Shake(ShakeArgs),
+
+    /// Measure repeated execution of a command in the Lean environment.
+    Profile(ProfileArgs),
+
+    /// Inspect the project's Lean module import graph.
+    Graph(GraphArgs),
+
+    /// Verify locks, dependency integrity, builds, and optional policy gates.
+    Verify(VerifyArgs),
+
+    /// Create a deterministic archive of the locked project sources.
+    Bundle(BundleArgs),
+
+    /// Rerun a command when project files change.
+    Watch(WatchArgs),
 
     /// Inspect dependencies recorded in lake-manifest.json.
     Deps(DepsArgs),

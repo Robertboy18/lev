@@ -216,7 +216,7 @@ if [ "${1:-}" = "run" ]; then
         printf 'Successfully applied %s suggestions.\n' "$count"
         exit 0
       fi
-      exit 1
+      exit "${LEV_TEST_SHAKE_SUGGEST_EXIT:-1}"
     fi
     exit 0
   fi

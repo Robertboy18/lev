@@ -90,8 +90,8 @@ enum FileDisposition {
     Restored,
 }
 
-#[derive(Debug, Serialize)]
-struct ShakeReport {
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct ShakeReport {
     mode: ShakeMode,
     status: ShakeStatus,
     files: Vec<ShakeFileReport>,
@@ -99,7 +99,7 @@ struct ShakeReport {
     coverage: Option<ShakeCoverage>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ShakeFileReport {
     path: String,
     removed_imports: Vec<String>,
@@ -117,8 +117,19 @@ struct ShakeCoverage {
     legacy: Vec<String>,
 }
 
+pub(super) struct ShakeOutcome {
+    pub code: i32,
+    pub report: ShakeReport,
+}
+
 /// Analyze Lean imports through Lake and optionally apply verified edits.
 pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
+    let outcome = shake_outcome(context, &args)?;
+    emit_report(&args, &outcome.report)?;
+    Ok(outcome.code)
+}
+
+pub(super) fn shake_outcome(context: &AppContext, args: &ShakeArgs) -> Result<ShakeOutcome> {
     if args.fix && context.local {
         bail!("`lev shake --fix` cannot be combined with `--local`");
     }
@@ -141,14 +152,20 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
     let _artifact_cache = lake_artifact_cache::lock_shared(&context.cache, &project.toolchain)?;
     registry::record(&context.cache, &project)?;
 
-    if let Some(code) = ensure_shake_modules_built(context, &project, &args)? {
-        return Ok(code);
+    if let Some(code) = ensure_shake_modules_built(context, &project, args)? {
+        return Ok(finish(
+            args,
+            ShakeStatus::AnalysisFailed,
+            Vec::new(),
+            None,
+            code,
+        ));
     }
 
     let mut analysis = captured_in_project(
         context,
         &project,
-        &shake_command(&args, false, false),
+        &shake_command(args, false, false),
         !args.execution.offline,
     )?;
     if !analysis.status.success()
@@ -157,36 +174,43 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
         && !args.no_build
         && !args.force
     {
-        for command in shake_verification_commands(&args) {
+        for command in shake_verification_commands(args) {
             context.info(format!(
                 "Lake modules are stale; running `{}` before import analysis",
                 display_os_command(&command)
             ));
             let build =
                 captured_uncached_in_project(context, &project, &command, !args.execution.offline)?;
-            relay_output(&build, args.json)?;
+            relay_output(&build, machine_output(args))?;
             if !build.status.success() {
-                return Ok(exit_code(build.status));
+                let code = exit_code(build.status);
+                return Ok(finish(
+                    args,
+                    ShakeStatus::AnalysisFailed,
+                    Vec::new(),
+                    None,
+                    code,
+                ));
             }
         }
         analysis = captured_in_project(
             context,
             &project,
-            &shake_command(&args, false, false),
+            &shake_command(args, false, false),
             !args.execution.offline,
         )?;
     }
 
     let suggestions = parse_shake_suggestions(&analysis.stdout);
     let coverage = if args.coverage && (analysis.status.success() || !suggestions.is_empty()) {
-        Some(collect_coverage(context, &source, &project, &args)?)
+        Some(collect_coverage(context, &source, &project, args)?)
     } else {
         None
     };
     let mut reports = suggestion_reports(&source.root, &project.root, &suggestions);
 
     if !args.fix {
-        relay_output(&analysis, args.json)?;
+        relay_output(&analysis, machine_output(args))?;
         let status = if !suggestions.is_empty() {
             ShakeStatus::ChangesRequired
         } else if analysis.status.success() {
@@ -194,24 +218,24 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
         } else {
             ShakeStatus::AnalysisFailed
         };
-        emit_report(&args, status, reports, coverage.as_ref())?;
-        return Ok(if suggestions.is_empty() {
+        let code = if suggestions.is_empty() {
             exit_code(analysis.status)
         } else {
             1
-        });
+        };
+        return Ok(finish(args, status, reports, coverage, code));
     }
 
     if suggestions.is_empty() {
-        relay_output(&analysis, args.json)?;
+        relay_output(&analysis, machine_output(args))?;
         let status = if analysis.status.success() {
             context.info("imports are already minimal");
             ShakeStatus::Clean
         } else {
             ShakeStatus::AnalysisFailed
         };
-        emit_report(&args, status, reports, coverage.as_ref())?;
-        return Ok(exit_code(analysis.status));
+        let code = exit_code(analysis.status);
+        return Ok(finish(args, status, reports, coverage, code));
     }
 
     let edits = validate_shake_edits(&source, suggestions)?;
@@ -230,16 +254,22 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
     let fixed = captured_in_project(
         context,
         &project,
-        &shake_command(&args, true, false),
+        &shake_command(args, true, false),
         !args.execution.offline,
     )?;
-    relay_output(&fixed, args.json)?;
+    relay_output(&fixed, machine_output(args))?;
     if !fixed.status.success() {
         transaction.restore_now()?;
         set_all_dispositions(&mut reports, FileDisposition::Restored);
         context.info("shake failed; restored the original Lean sources");
-        emit_report(&args, ShakeStatus::ApplyFailed, reports, coverage.as_ref())?;
-        return Ok(exit_code(fixed.status));
+        let code = exit_code(fixed.status);
+        return Ok(finish(
+            args,
+            ShakeStatus::ApplyFailed,
+            reports,
+            coverage,
+            code,
+        ));
     }
 
     let proposed = edits
@@ -263,28 +293,27 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
     let batch_failure = verify_shake_edits(
         context,
         &project,
-        &args,
+        args,
         "verifying rewritten imports",
         VerificationVisibility::Visible,
     )?;
     let Some(batch_failure) = batch_failure else {
         transaction.commit();
         set_all_dispositions(&mut reports, FileDisposition::Applied);
-        emit_report(&args, ShakeStatus::Applied, reports, coverage.as_ref())?;
-        return Ok(0);
+        return Ok(finish(args, ShakeStatus::Applied, reports, coverage, 0));
     };
 
     if !args.isolate {
         context.info("import verification failed; restoring the original Lean sources");
         transaction.restore_now()?;
         set_all_dispositions(&mut reports, FileDisposition::Restored);
-        emit_report(
-            &args,
+        return Ok(finish(
+            args,
             ShakeStatus::VerificationFailed,
             reports,
-            coverage.as_ref(),
-        )?;
-        return Ok(batch_failure.code);
+            coverage,
+            batch_failure.code,
+        ));
     }
 
     context.info("batch verification failed; isolating import edits");
@@ -292,7 +321,7 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
     let baseline_failure = verify_shake_edits(
         context,
         &project,
-        &args,
+        args,
         "verifying the restored baseline",
         VerificationVisibility::Visible,
     )?;
@@ -300,13 +329,13 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
         transaction.restore_now()?;
         set_all_dispositions(&mut reports, FileDisposition::Restored);
         context.info("the restored baseline does not build; no isolated edits were kept");
-        emit_report(
-            &args,
+        return Ok(finish(
+            args,
             ShakeStatus::BaselineFailed,
             reports,
-            coverage.as_ref(),
-        )?;
-        return Ok(failure.code);
+            coverage,
+            failure.code,
+        ));
     }
 
     let mut accepted = BTreeSet::new();
@@ -319,7 +348,7 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
         isolate_subset(
             context,
             &project,
-            &args,
+            args,
             &candidates,
             &indices[..middle],
             &mut accepted,
@@ -328,7 +357,7 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
         isolate_subset(
             context,
             &project,
-            &args,
+            args,
             &candidates,
             &indices[middle..],
             &mut accepted,
@@ -339,20 +368,20 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
     if let Some(failure) = verify_shake_edits(
         context,
         &project,
-        &args,
+        args,
         "verifying the isolated result",
         VerificationVisibility::Visible,
     )? {
         transaction.restore_now()?;
         set_all_dispositions(&mut reports, FileDisposition::Restored);
         context.info("isolated import verification failed; restored every source");
-        emit_report(
-            &args,
+        return Ok(finish(
+            args,
             ShakeStatus::VerificationFailed,
             reports,
-            coverage.as_ref(),
-        )?;
-        return Ok(failure.code);
+            coverage,
+            failure.code,
+        ));
     }
 
     for index in &accepted {
@@ -394,8 +423,13 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
     } else {
         ShakeStatus::PartiallyApplied
     };
-    emit_report(&args, status, reports, coverage.as_ref())?;
-    Ok(if rejected.is_empty() { 0 } else { 1 })
+    Ok(finish(
+        args,
+        status,
+        reports,
+        coverage,
+        if rejected.is_empty() { 0 } else { 1 },
+    ))
 }
 
 fn isolate_subset(
@@ -432,7 +466,7 @@ fn isolate_subset(
     apply_candidate_contents(candidates, indices, false)?;
     if indices.len() == 1 {
         let failure = failure.expect("checked above");
-        relay_output(&failure.output, args.json)?;
+        relay_output(&failure.output, machine_output(args))?;
         rejected.insert(indices[0]);
         return Ok(());
     }
@@ -524,7 +558,7 @@ fn verify_shake_edits(
         let output =
             captured_uncached_in_project(context, project, &command, !args.execution.offline)?;
         if matches!(visibility, VerificationVisibility::Visible) {
-            relay_output(&output, args.json)?;
+            relay_output(&output, machine_output(args))?;
         }
         if !output.status.success() {
             return Ok(Some(VerificationFailure {
@@ -538,7 +572,7 @@ fn verify_shake_edits(
         let output =
             captured_uncached_in_project(context, project, &command, !args.execution.offline)?;
         if matches!(visibility, VerificationVisibility::Visible) {
-            relay_output(&output, args.json)?;
+            relay_output(&output, machine_output(args))?;
         }
         if !output.status.success() {
             return Ok(Some(VerificationFailure {
@@ -681,6 +715,10 @@ fn parse_shake_suggestions(stdout: &[u8]) -> Vec<ParsedSuggestion> {
         }
     }
     suggestions.into_values().collect()
+}
+
+pub(super) fn output_has_suggestions(stdout: &[u8]) -> bool {
+    !parse_shake_suggestions(stdout).is_empty()
 }
 
 fn parse_import_array(line: &str, prefix: &str) -> Option<Vec<String>> {
@@ -1016,37 +1054,167 @@ fn set_disposition(
     }
 }
 
-fn emit_report(
+fn finish(
     args: &ShakeArgs,
     status: ShakeStatus,
     files: Vec<ShakeFileReport>,
-    coverage: Option<&ShakeCoverage>,
-) -> Result<()> {
-    if args.json {
-        let mode = if args.isolate {
-            ShakeMode::Isolate
-        } else if args.fix {
-            ShakeMode::Fix
-        } else if args.check {
-            ShakeMode::Check
-        } else {
-            ShakeMode::Preview
-        };
-        json_output::print(
-            schema::SHAKE,
-            &ShakeReport {
-                mode,
-                status,
-                files,
-                coverage: coverage.cloned(),
-            },
-        )
+    coverage: Option<ShakeCoverage>,
+    code: i32,
+) -> ShakeOutcome {
+    let mode = if args.isolate {
+        ShakeMode::Isolate
+    } else if args.fix {
+        ShakeMode::Fix
+    } else if args.check {
+        ShakeMode::Check
     } else {
-        if let Some(coverage) = coverage {
+        ShakeMode::Preview
+    };
+    ShakeOutcome {
+        code,
+        report: ShakeReport {
+            mode,
+            status,
+            files,
+            coverage,
+        },
+    }
+}
+
+pub(super) fn emit_report(args: &ShakeArgs, report: &ShakeReport) -> Result<()> {
+    if let Some(path) = &args.sarif {
+        write_sarif(path, [(None, report)])
+    } else if args.json {
+        json_output::print(schema::SHAKE, report)
+    } else {
+        if let Some(coverage) = &report.coverage {
             print_coverage(coverage)?;
         }
         Ok(())
     }
+}
+
+fn machine_output(args: &ShakeArgs) -> bool {
+    args.json || args.sarif.is_some()
+}
+
+pub(super) fn write_workspace_sarif<'a>(
+    path: &Path,
+    reports: impl IntoIterator<Item = (&'a str, &'a ShakeReport)>,
+) -> Result<()> {
+    write_sarif(
+        path,
+        reports
+            .into_iter()
+            .map(|(member, report)| (Some(member), report)),
+    )
+}
+
+fn write_sarif<'a>(
+    path: &Path,
+    reports: impl IntoIterator<Item = (Option<&'a str>, &'a ShakeReport)>,
+) -> Result<()> {
+    let mut results = Vec::new();
+    for (member, report) in reports {
+        results.extend(report.files.iter().filter_map(|file| {
+            if matches!(file.disposition, FileDisposition::Applied) {
+                return None;
+            }
+            let rejected = matches!(
+                file.disposition,
+                FileDisposition::Rejected | FileDisposition::Restored
+            );
+            let rule = if rejected {
+                "lev.import-rewrite-rejected"
+            } else {
+                "lev.import-drift"
+            };
+            let mut changes = Vec::new();
+            if !file.removed_imports.is_empty() {
+                changes.push(format!("remove {}", file.removed_imports.join(", ")));
+            }
+            if !file.added_imports.is_empty() {
+                changes.push(format!("add {}", file.added_imports.join(", ")));
+            }
+            let uri = sarif_uri(member, &file.path);
+            Some(serde_json::json!({
+                "ruleId": rule,
+                "level": if rejected { "error" } else { "warning" },
+                "message": {
+                    "text": if changes.is_empty() {
+                        "Lean import policy check failed".to_owned()
+                    } else {
+                        format!("Import minimization: {}", changes.join("; "))
+                    }
+                },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": uri },
+                        "region": { "startLine": 1, "startColumn": 1 }
+                    }
+                }]
+            }))
+        }));
+    }
+    let document = serde_json::json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "lev",
+                    "informationUri": env!("CARGO_PKG_HOMEPAGE"),
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "rules": [
+                        {
+                            "id": "lev.import-drift",
+                            "shortDescription": { "text": "Lean imports can be minimized" }
+                        },
+                        {
+                            "id": "lev.import-rewrite-rejected",
+                            "shortDescription": {
+                                "text": "A proposed Lean import rewrite did not verify"
+                            }
+                        }
+                    ]
+                }
+            },
+            "results": results
+        }]
+    });
+    let mut bytes = serde_json::to_vec_pretty(&document).context("failed to serialize SARIF")?;
+    bytes.push(b'\n');
+    if path == Path::new("-") {
+        io::stdout()
+            .lock()
+            .write_all(&bytes)
+            .context("failed to write SARIF output")
+    } else {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        atomic_replace(path, &bytes)
+    }
+}
+
+fn sarif_uri(member: Option<&str>, path: &str) -> String {
+    let joined = member
+        .map(|member| format!("{member}/{path}"))
+        .unwrap_or_else(|| path.to_owned());
+    let mut encoded = String::with_capacity(joined.len());
+    for byte in joined.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write as _;
+            write!(encoded, "%{byte:02X}").expect("writing to a String cannot fail");
+        }
+    }
+    encoded
 }
 
 fn print_coverage(coverage: &ShakeCoverage) -> Result<()> {
@@ -1105,7 +1273,16 @@ mod tests {
 
     use super::{
         display_suggestion_path, has_module_header, parse_shake_suggestions, project_relative_path,
+        sarif_uri,
     };
+
+    #[test]
+    fn sarif_uris_escape_reserved_and_non_ascii_path_bytes() {
+        assert_eq!(
+            sarif_uri(Some("packages/a b"), "Proof #1/α.lean"),
+            "packages/a%20b/Proof%20%231/%CE%B1.lean"
+        );
+    }
 
     #[test]
     fn parses_multiple_import_edits_without_losing_context_to_github_diagnostics() {

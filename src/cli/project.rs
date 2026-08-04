@@ -346,8 +346,12 @@ pub struct ShakeArgs {
     pub isolate: bool,
 
     /// Print a stable machine-readable report.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "sarif")]
     pub json: bool,
+
+    /// Write a SARIF 2.1.0 report (`-` for standard output).
+    #[arg(long, value_name = "PATH")]
+    pub sarif: Option<PathBuf>,
 
     /// Classify project files by import-analysis coverage.
     #[arg(long)]
@@ -396,6 +400,133 @@ pub struct ShakeArgs {
     /// Root modules to analyze. Defaults to the package's default targets.
     #[arg(value_name = "MODULE")]
     pub modules: Vec<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ProfileArgs {
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
+
+    /// Number of measured command executions.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=10_000))]
+    pub repeat: u32,
+
+    /// Unmeasured executions performed before recording samples.
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=10_000))]
+    pub warmup: u32,
+
+    /// Print a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Write the report to a file instead of standard output.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+
+    /// Command to measure. Defaults to `lake build`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<OsString>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum GraphFormat {
+    /// Human-readable module and import summary.
+    Text,
+    /// Stable JSON envelope.
+    Json,
+    /// Graphviz DOT.
+    Dot,
+}
+
+#[derive(Debug, Args)]
+pub struct GraphArgs {
+    /// Root module or Lean file. Repeat to select several roots.
+    #[arg(value_name = "MODULE")]
+    pub roots: Vec<String>,
+
+    /// Include imports whose source is outside this project.
+    #[arg(long)]
+    pub external: bool,
+
+    /// Output representation.
+    #[arg(long, value_enum, default_value_t = GraphFormat::Text)]
+    pub format: GraphFormat,
+
+    /// Write output to this file instead of standard output.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct VerifyArgs {
+    /// Require all dependencies and the selected toolchain to be local.
+    #[arg(long)]
+    pub offline: bool,
+
+    /// Run `lake clean` before building.
+    #[arg(long)]
+    pub clean: bool,
+
+    /// Run the Lake test driver after the build.
+    #[arg(long)]
+    pub test: bool,
+
+    /// Run the Lake lint driver after the build.
+    #[arg(long)]
+    pub lint: bool,
+
+    /// Fail when Lake's import minimizer reports source drift.
+    #[arg(long)]
+    pub imports: bool,
+
+    /// Treat audit portability warnings as failures.
+    #[arg(long)]
+    pub strict: bool,
+
+    /// Print a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Arguments passed to `lake build`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub build_args: Vec<OsString>,
+}
+
+#[derive(Debug, Args)]
+pub struct BundleArgs {
+    /// Destination archive. Defaults to `<project>.lev.tar.zst`.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+
+    /// Replace an existing destination archive.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct WatchArgs {
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
+
+    /// Wait this many milliseconds after the last change before rerunning.
+    #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(10..=60_000))]
+    pub debounce_ms: u64,
+
+    /// Wait for a change before the first execution.
+    #[arg(long)]
+    pub no_initial: bool,
+
+    /// Stop watching when the command exits unsuccessfully.
+    #[arg(long)]
+    pub exit_on_failure: bool,
+
+    /// Stop after this many command executions.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1_000_000))]
+    pub max_runs: Option<u32>,
+
+    /// Command to run. Defaults to `lake build`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<OsString>,
 }
 
 #[derive(Debug, Args)]
@@ -504,6 +635,16 @@ pub struct WorkspaceArgs {
     pub command: WorkspaceCommand,
 }
 
+#[derive(Debug, Args)]
+pub struct WorkspaceShakeArgs {
+    #[command(flatten)]
+    pub shake: ShakeArgs,
+
+    /// Continue minimizing remaining members after a failure.
+    #[arg(long)]
+    pub keep_going: bool,
+}
+
 #[derive(Debug, Subcommand)]
 /// Operations over the stable member set declared by `[workspace]`.
 pub enum WorkspaceCommand {
@@ -585,4 +726,7 @@ pub enum WorkspaceCommand {
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<OsString>,
     },
+
+    /// Analyze or minimize imports in every workspace project.
+    Shake(WorkspaceShakeArgs),
 }

@@ -1,6 +1,369 @@
 use super::*;
 
 #[test]
+fn profile_graph_verify_and_timings_have_stable_reports() {
+    let fixture = Fixture::new();
+    write_empty_project(&fixture.project, "root");
+    fs::write(
+        fixture.project.join("Main.lean"),
+        "import Project.Helper\nimport Mathlib\n",
+    )
+    .unwrap();
+    fs::create_dir(fixture.project.join("Project")).unwrap();
+    fs::write(
+        fixture.project.join("Project/Helper.lean"),
+        "def helper := 1\n",
+    )
+    .unwrap();
+
+    let project_graph = fixture
+        .lev()
+        .args(["graph", "Main", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_success_ref(&project_graph);
+    let project_graph = json_data(&project_graph, "lev.cli.graph/v1");
+    assert!(
+        project_graph["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|edge| edge["external"] == false)
+    );
+    assert!(
+        project_graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|node| node["imports"].as_array().unwrap())
+            .all(|import| import != "Mathlib")
+    );
+
+    let graph = fixture
+        .lev()
+        .args(["graph", "Main", "--external", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_success_ref(&graph);
+    let graph = json_data(&graph, "lev.cli.graph/v1");
+    assert_eq!(graph["nodes"].as_array().unwrap().len(), 2);
+    assert!(
+        graph["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["to"] == "Mathlib" && edge["external"] == true)
+    );
+
+    fs::write(&fixture.log, "").unwrap();
+    let profile = fixture
+        .lev()
+        .args([
+            "profile",
+            "--no-sync",
+            "--offline",
+            "--repeat",
+            "3",
+            "--warmup",
+            "1",
+            "--json",
+            "--",
+            "lake",
+            "build",
+        ])
+        .output()
+        .unwrap();
+    assert_success_ref(&profile);
+    let profile = json_data(&profile, "lev.cli.profile/v1");
+    assert_eq!(profile["completed_repeats"], 3);
+    assert_eq!(profile["samples_ms"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        fs::read_to_string(&fixture.log)
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with("lake-build\t"))
+            .count(),
+        4
+    );
+    assert!(
+        fs::read_to_string(&fixture.log)
+            .unwrap()
+            .lines()
+            .all(|line| !line.contains("run --install")),
+        "offline profiling must not permit implicit toolchain installation"
+    );
+
+    let failed_profile = fixture
+        .lev()
+        .args([
+            "profile",
+            "--no-sync",
+            "--offline",
+            "--repeat",
+            "3",
+            "--json",
+            "--",
+            "sh",
+            "-c",
+            "exit 23",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(failed_profile.status.code(), Some(23));
+    let failed_profile = json_data(&failed_profile, "lev.cli.profile/v1");
+    assert_eq!(failed_profile["completed_repeats"], 1);
+    assert_eq!(failed_profile["samples_ms"].as_array().unwrap().len(), 1);
+    assert_eq!(failed_profile["exit_code"], 23);
+
+    assert_success(fixture.lev().arg("lock").output().unwrap());
+    let verified = fixture
+        .lev()
+        .args(["verify", "--offline", "--json"])
+        .output()
+        .unwrap();
+    assert_success_ref(&verified);
+    let verified = json_data(&verified, "lev.cli.verify/v1");
+    assert_eq!(verified["status"], "passed");
+    assert_eq!(
+        verified["phases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|phase| phase["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["lock", "audit", "toolchain", "build"]
+    );
+
+    let failed_verify = fixture
+        .lev()
+        .args(["verify", "--offline", "--json"])
+        .env("LEV_TEST_LAKE_BUILD_FAIL_MEMBER", "project")
+        .env("LEV_TEST_LAKE_BUILD_EXIT", "37")
+        .output()
+        .unwrap();
+    assert_eq!(failed_verify.status.code(), Some(37));
+    let failed_verify = json_data(&failed_verify, "lev.cli.verify/v1");
+    assert_eq!(failed_verify["status"], "failed");
+    assert_eq!(
+        failed_verify["phases"].as_array().unwrap().last().unwrap()["name"],
+        "build"
+    );
+    assert_eq!(
+        failed_verify["phases"].as_array().unwrap().last().unwrap()["status"],
+        "failed"
+    );
+
+    let import_drift = fixture
+        .lev()
+        .args(["verify", "--offline", "--imports", "--json"])
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_SUGGEST_EXIT", "0")
+        .env("LEV_TEST_SHAKE_FILE", fixture.project.join("Main.lean"))
+        .output()
+        .unwrap();
+    assert_eq!(import_drift.status.code(), Some(1));
+    let import_drift = json_data(&import_drift, "lev.cli.verify/v1");
+    let import_phase = import_drift["phases"].as_array().unwrap().last().unwrap();
+    assert_eq!(import_phase["name"], "imports");
+    assert_eq!(import_phase["status"], "failed");
+    assert!(
+        import_phase["detail"]
+            .as_str()
+            .unwrap()
+            .contains("can be minimized")
+    );
+
+    let timed = fixture
+        .lev()
+        .args(["--timings", "build", "--no-sync", "--offline"])
+        .output()
+        .unwrap();
+    assert_success_ref(&timed);
+    let stderr = String::from_utf8_lossy(&timed.stderr);
+    for phase in ["environment", "prepare", "locks", "command", "total"] {
+        assert!(
+            stderr.contains(&format!("lev timing: {phase} ")),
+            "{stderr}"
+        );
+    }
+}
+
+#[test]
+fn bundle_is_deterministic_and_excludes_generated_trees() {
+    let fixture = Fixture::new();
+    write_empty_project(&fixture.project, "root");
+    fs::write(fixture.project.join("Root.lean"), "def answer := 42\n").unwrap();
+    fs::create_dir_all(fixture.project.join(".lake/build")).unwrap();
+    fs::write(
+        fixture.project.join(".lake/build/generated.olean"),
+        "generated",
+    )
+    .unwrap();
+    assert_success(fixture.lev().arg("lock").output().unwrap());
+
+    let first = fixture.root.join("first.lev.tar.zst");
+    let second = fixture.root.join("second.lev.tar.zst");
+    assert_success(
+        fixture
+            .lev()
+            .args(["bundle", "--output"])
+            .arg(&first)
+            .output()
+            .unwrap(),
+    );
+    assert_success(
+        fixture
+            .lev()
+            .args(["bundle", "--output"])
+            .arg(&second)
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
+
+    let decoder = zstd::stream::read::Decoder::new(fs::File::open(first).unwrap()).unwrap();
+    let mut archive = tar::Archive::new(decoder);
+    let mut paths = Vec::new();
+    let mut manifest = None;
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().into_owned();
+        if path.ends_with("/lev-bundle.json") {
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            manifest = Some(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap());
+        }
+        paths.push(path);
+    }
+    assert!(paths.iter().any(|path| path.ends_with("/Root.lean")));
+    assert!(!paths.iter().any(|path| path.contains("/.lake/")));
+    let manifest = manifest.unwrap();
+    assert_eq!(manifest["schema"], "lev.project-bundle/v1");
+    assert!(
+        manifest["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "Root.lean" && file["size"] == 17)
+    );
+}
+
+#[test]
+fn watch_reruns_after_a_source_change() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let runs = fixture.root.join("watch-runs.txt");
+    fs::write(&source, "def value := 1\n").unwrap();
+
+    let mut child = fixture
+        .lev()
+        .args([
+            "watch",
+            "--no-sync",
+            "--offline",
+            "--debounce-ms",
+            "30",
+            "--max-runs",
+            "2",
+            "--",
+            "sh",
+            "-c",
+            "printf 'run\\n' >> \"$LEV_TEST_WATCH_RUNS\"",
+        ])
+        .env("LEV_TEST_WATCH_RUNS", &runs)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::read_to_string(&runs)
+        .unwrap_or_default()
+        .lines()
+        .count()
+        < 1
+    {
+        assert!(
+            Instant::now() < deadline,
+            "initial watch run did not finish"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    fs::write(&source, "def value := 2\n").unwrap();
+
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "watch exited with {status}");
+            break;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "watch did not observe the source change\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(fs::read_to_string(runs).unwrap(), "run\nrun\n");
+}
+
+#[test]
+fn watch_tracks_a_directory_moved_into_the_project() {
+    let fixture = Fixture::new();
+    let runs = fixture.root.join("moved-watch-runs.txt");
+    let incoming = fixture.root.join("incoming");
+    fs::create_dir(&incoming).unwrap();
+    fs::write(incoming.join("Moved.lean"), "def value := 1\n").unwrap();
+
+    let mut child = fixture
+        .lev()
+        .args([
+            "watch",
+            "--no-sync",
+            "--offline",
+            "--debounce-ms",
+            "30",
+            "--max-runs",
+            "3",
+            "--",
+            "sh",
+            "-c",
+            "printf 'run\\n' >> \"$LEV_TEST_WATCH_RUNS\"",
+        ])
+        .env("LEV_TEST_WATCH_RUNS", &runs)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    wait_for_line_count(&runs, 1, Duration::from_secs(5));
+    let moved = fixture.project.join("Moved");
+    fs::rename(&incoming, &moved).unwrap();
+    wait_for_line_count(&runs, 2, Duration::from_secs(5));
+    fs::write(moved.join("Moved.lean"), "def value := 2\n").unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "watch exited with {status}");
+            break;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "watch did not observe a change under the moved directory\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(fs::read_to_string(runs).unwrap(), "run\nrun\nrun\n");
+}
+
+#[test]
 fn workspace_lists_syncs_locks_and_rejects_partial_aggregate_updates() {
     let fixture = Fixture::new();
     let workspace = fixture.root.join("monorepo");
@@ -108,6 +471,154 @@ exclude = ["packages/experimental"]
             workspace.join("packages/alpha"),
             workspace.join("packages/beta")
         ]
+    );
+}
+
+#[test]
+fn workspace_shake_emits_one_aggregate_json_document() {
+    let fixture = Fixture::new();
+    let workspace = fixture.root.join("shake-monorepo");
+    write_empty_project(&workspace.join("alpha"), "alpha");
+    write_empty_project(&workspace.join("beta"), "beta");
+    fs::write(
+        workspace.join("lev.toml"),
+        "[workspace]\nmembers = [\"alpha\", \"beta\"]\n",
+    )
+    .unwrap();
+    fs::write(workspace.join("alpha/Alpha.lean"), "def alpha := 1\n").unwrap();
+    fs::write(workspace.join("beta/Beta.lean"), "def beta := 2\n").unwrap();
+
+    let output = fixture
+        .lev_at(&workspace)
+        .args([
+            "workspace",
+            "shake",
+            "--no-sync",
+            "--offline",
+            "--check",
+            "--json",
+            "--keep-going",
+        ])
+        .output()
+        .unwrap();
+    assert_success_ref(&output);
+    let report = json_data(&output, "lev.cli.workspace.shake/v1");
+    assert_eq!(report["members"].as_array().unwrap().len(), 2);
+    assert!(
+        report["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|member| member["exit_code"] == 0 && member["report"]["status"] == "clean")
+    );
+}
+
+#[test]
+fn workspace_shake_honors_a_selected_locked_environment_for_every_member() {
+    let fixture = Fixture::new();
+    let workspace = fixture.root.join("shake-toolchain-monorepo");
+    let alpha = workspace.join("alpha");
+    let beta = workspace.join("beta");
+    write_empty_project(&alpha, "alpha");
+    write_empty_project(&beta, "beta");
+    fs::write(
+        workspace.join("lev.toml"),
+        "[workspace]\nmembers = [\"alpha\", \"beta\"]\n",
+    )
+    .unwrap();
+    fs::write(alpha.join("Alpha.lean"), "def alpha := 1\n").unwrap();
+    fs::write(beta.join("Beta.lean"), "def beta := 2\n").unwrap();
+
+    for member in [&alpha, &beta] {
+        assert_success(
+            fixture
+                .lev_at(member)
+                .args(["lock", "--lean", "4.fixture-d"])
+                .output()
+                .unwrap(),
+        );
+    }
+
+    fs::write(&fixture.log, "").unwrap();
+    let output = fixture
+        .lev_at(&workspace)
+        .args([
+            "workspace",
+            "shake",
+            "--lean",
+            "4.fixture-d",
+            "--no-sync",
+            "--offline",
+            "--check",
+            "--keep-going",
+        ])
+        .output()
+        .unwrap();
+    assert_success_ref(&output);
+
+    let log = fs::read_to_string(&fixture.log).unwrap();
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.starts_with("lake-shake\t"))
+            .count(),
+        2,
+        "{log}"
+    );
+    assert_eq!(
+        log.lines()
+            .filter(|line| { line.starts_with("run leanprover/lean4:v4.fixture-d lake shake") })
+            .count(),
+        2,
+        "{log}"
+    );
+}
+
+#[test]
+fn workspace_shake_emits_one_sarif_report_with_member_paths() {
+    let fixture = Fixture::new();
+    let workspace = fixture.root.join("shake-sarif-monorepo");
+    let member = workspace.join("alpha");
+    write_empty_project(&member, "alpha");
+    fs::write(
+        workspace.join("lev.toml"),
+        "[workspace]\nmembers = [\"alpha\"]\n",
+    )
+    .unwrap();
+    let source = member.join("Alpha.lean");
+    let replacement = fixture.root.join("alpha-replacement.lean");
+    let sarif = fixture.root.join("workspace-shake.sarif");
+    fs::write(&source, "module\n\nimport Mathlib\n").unwrap();
+    fs::write(
+        &replacement,
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev_at(&workspace)
+        .args([
+            "workspace",
+            "shake",
+            "--no-sync",
+            "--offline",
+            "--check",
+            "--sarif",
+        ])
+        .arg(&sarif)
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(sarif).unwrap()).unwrap();
+    assert_eq!(report["version"], "2.1.0");
+    assert_eq!(report["runs"][0]["results"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        report["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        "alpha/Alpha.lean"
     );
 }
 

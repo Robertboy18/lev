@@ -953,6 +953,76 @@ fn shake_check_emits_a_versioned_json_drift_report() {
 }
 
 #[test]
+fn shake_can_emit_sarif_for_ci_annotations() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    let sarif = fixture.root.join("shake.sarif");
+    fs::write(&source, "module\n\nimport Mathlib\n").unwrap();
+    fs::write(
+        &replacement,
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev()
+        .args(["shake", "--no-sync", "--check", "--sarif"])
+        .arg(&sarif)
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(sarif).unwrap()).unwrap();
+    assert_eq!(report["version"], "2.1.0");
+    assert_eq!(report["runs"][0]["tool"]["driver"]["name"], "lev");
+    assert_eq!(
+        report["runs"][0]["results"][0]["ruleId"],
+        "lev.import-drift"
+    );
+    assert_eq!(
+        report["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        "Root.lean"
+    );
+}
+
+#[test]
+fn shake_sarif_omits_imports_that_were_successfully_applied() {
+    let fixture = Fixture::new();
+    let source = fixture.project.join("Root.lean");
+    let replacement = fixture.root.join("replacement.lean");
+    let sarif = fixture.root.join("shake-applied.sarif");
+    fs::write(&source, "module\n\nimport Mathlib\n").unwrap();
+    fs::write(
+        &replacement,
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .lev()
+        .args(["shake", "--no-sync", "--fix", "--sarif"])
+        .arg(&sarif)
+        .env("LEV_TEST_SHAKE_SUGGEST", "1")
+        .env("LEV_TEST_SHAKE_FILE", &source)
+        .env("LEV_TEST_SHAKE_REPLACEMENT_FILE", &replacement)
+        .output()
+        .unwrap();
+    assert_success_ref(&output);
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        fs::read_to_string(source).unwrap(),
+        "module\n\nimport Mathlib.Data.Nat.Prime.Basic\n"
+    );
+
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(sarif).unwrap()).unwrap();
+    assert_eq!(report["runs"][0]["results"], json!([]));
+}
+
+#[test]
 fn shake_coverage_classifies_every_project_lean_file_once() {
     let fixture = Fixture::new();
     let analyzed = fixture.project.join("Analyzed.lean");

@@ -791,6 +791,87 @@ lev why PACKAGE
 lev audit --strict
 lev export --format cyclonedx --output project.cdx.json</code></pre>
           </div>
+
+          <h3>Measure, verify, and automate the project</h3>
+          <p>
+            Global timings separate environment, preparation, lock, command,
+            and total time. Profiling adds warmups, repeated measured samples,
+            summary statistics, and stable JSON output.
+          </p>
+          <div class="example-code-pair">
+            <div class="command-block">
+              <div class="command-label">Timings and repeated profiles</div>
+              <pre><code>lev --timings build
+
+lev profile \
+  --warmup 1 \
+  --repeat 5 \
+  -- lake build</code></pre>
+            </div>
+            <div class="command-block">
+              <div class="command-label">Import graph</div>
+              <pre><code>lev graph MyProject.Main \
+  --external
+
+lev graph MyProject.Main \
+  --external \
+  --format dot \
+  -o imports.dot</code></pre>
+            </div>
+          </div>
+          <div class="example-code-pair">
+            <div class="command-block">
+              <div class="command-label">One reproducibility gate</div>
+              <pre><code>lev verify \
+  --offline \
+  --test \
+  --lint \
+  --imports</code></pre>
+            </div>
+            <div class="command-block">
+              <div class="command-label">Review dependency changes</div>
+              <pre><code>lev outdated
+lev upgrade --dry-run
+lev upgrade</code></pre>
+            </div>
+          </div>
+
+          <h3>Scale the workflow across edits and workspaces</h3>
+          <div class="example-code-pair">
+            <div class="command-block">
+              <div class="command-label">Workspace import policy</div>
+              <pre><code>lev workspace shake \
+  --check \
+  --json \
+  --keep-going
+
+lev workspace shake \
+  --check \
+  --sarif lev-shake.sarif \
+  --keep-going</code></pre>
+            </div>
+            <div class="command-block">
+              <div class="command-label">Deterministic handoff and watch mode</div>
+              <pre><code>lev bundle \
+  -o project.lev.tar.zst
+
+lev watch -- lake build
+lev watch --exit-on-failure -- lake test</code></pre>
+            </div>
+          </div>
+          <p>
+            A bundle requires a current <code>lev.lock</code>, includes a
+            per-file hash manifest, and excludes Git state, dependency
+            checkouts, <code>.lake</code>, and generated build trees. It is a
+            portable source archive, not a vendored dependency bundle.
+            Unchanged inputs produce byte-identical archives.
+          </p>
+          <p>
+            Watch mode uses filesystem notifications and debounces edit bursts.
+            It runs <code>lake build</code> immediately by default, ignores
+            lev-managed lock and manifest writes, and can wait for the first
+            edit with <code>--no-initial</code>.
+          </p>
         </section>
 
         <section
@@ -933,7 +1014,8 @@ import Mathlib.RingTheory.DedekindDomain.Basic -- shake: keep</code></pre>
           <h3 class="roadmap-heading">What the FLT run changed</h3>
           <p>
             The failure modes from that run now have dedicated CLI workflows.
-            Metrics, SARIF, and workspace-wide application remain future work.
+            The same workflows now expose timings, graph reports, SARIF, and
+            workspace-wide import checks.
           </p>
           <div class="roadmap-list">
             <article>
@@ -959,22 +1041,27 @@ import Mathlib.RingTheory.DedekindDomain.Basic -- shake: keep</code></pre>
               <p>
                 <strong>Available now.</strong>
                 <code>--check --json</code> emits the stable
-                <code>lev.cli.shake/v1</code> report. SARIF review annotations
-                remain planned.
+                <code>lev.cli.shake/v1</code> report, while
+                <code>--check --sarif lev-shake.sarif</code> writes SARIF 2.1.0
+                review annotations.
               </p>
             </article>
             <article>
               <h3>Measured impact</h3>
               <p>
-                Compare direct and transitive import counts, affected modules,
-                and optional build or elaboration timings.
+                <strong>Available now.</strong>
+                <code>lev graph</code> exposes module relationships, global
+                <code>--timings</code> separates lev phases, and
+                <code>lev profile</code> measures repeated commands.
               </p>
             </article>
             <article>
               <h3>Workspace operation</h3>
               <p>
-                Process selected Lake packages with per-project transactions
-                and one aggregate report.
+                <strong>Available now.</strong>
+                <code>lev workspace shake</code> processes selected Lake
+                packages with per-project transactions and one aggregate JSON
+                or SARIF report.
               </p>
             </article>
           </div>
@@ -1081,7 +1168,7 @@ import Mathlib.RingTheory.DedekindDomain.Basic -- shake: keep</code></pre>
         <section
           class="doc-section"
           id="commands"
-          data-title="Command map reference init sync lock build run cache toolchain dependency add"
+          data-title="Command map reference init sync lock build run profile timings graph verify upgrade bundle watch shake workspace cache toolchain dependency add"
         >
           <p class="section-kicker">Reference</p>
           <h2>Command map</h2>
@@ -1097,8 +1184,14 @@ import Mathlib.RingTheory.DedekindDomain.Basic -- shake: keep</code></pre>
             <div><code>lev doctor</code><span>Check Lean, Lake, Git, and cache setup.</span></div>
             <div><code>lev audit</code><span>Check lock and checkout integrity.</span></div>
             <div><code>lev shake</code><span>Infer and safely apply minimal imports; <code>lev imports</code> is an alias.</span></div>
+            <div><code>lev profile</code><span>Measure warm and repeated commands in the selected environment.</span></div>
+            <div><code>lev graph</code><span>Inspect project module imports as text, JSON, or Graphviz DOT.</span></div>
+            <div><code>lev verify</code><span>Run locks, audit, toolchain, build, and optional policy gates.</span></div>
+            <div><code>lev outdated / upgrade</code><span>Review and apply dependency updates.</span></div>
+            <div><code>lev bundle</code><span>Create a deterministic archive of locked project sources.</span></div>
+            <div><code>lev watch</code><span>Rerun a command when project files change.</span></div>
             <div><code>lev matrix</code><span>Run one command across isolated toolchains.</span></div>
-            <div><code>lev workspace</code><span>Operate on a configured set of Lake projects.</span></div>
+            <div><code>lev workspace</code><span>Build, run, lock, sync, or shake configured Lake projects.</span></div>
             <div><code>lev script</code><span>Run one Lean file in a cached inline environment.</span></div>
             <div><code>lev export</code><span>Write a dependency inventory or CycloneDX SBOM.</span></div>
           </div>

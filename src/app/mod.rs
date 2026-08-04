@@ -17,13 +17,16 @@ use crate::project::local_workspace as workspace;
 use crate::project::{Project, absolute};
 use crate::toolchain::store::ToolchainStore;
 
+mod bundle_commands;
 mod cache_commands;
 mod dependency_commands;
 mod environment_commands;
 mod execution_commands;
+mod graph_commands;
 mod isolated_environment;
 mod matrix_commands;
 mod native_resolver;
+mod profile_commands;
 mod project_commands;
 mod script_commands;
 mod self_commands;
@@ -32,6 +35,8 @@ mod sync_commands;
 mod tool_commands;
 mod toolchain_commands;
 mod transaction;
+mod verify_commands;
+mod watch_commands;
 mod workspace_commands;
 
 /// Process-wide settings shared by commands and workspace members.
@@ -46,10 +51,13 @@ struct AppContext {
     verbose: bool,
     progress: bool,
     local: bool,
+    timings: bool,
 }
 
 /// Build the application context and dispatch one parsed CLI command.
 pub fn execute(cli: Cli) -> Result<i32> {
+    let started = std::time::Instant::now();
+    let timings = cli.timings;
     let project_start = match cli.project {
         Some(path) => absolute(&path)?,
         None => std::env::current_dir().context("failed to determine current directory")?,
@@ -64,9 +72,10 @@ pub fn execute(cli: Cli) -> Result<i32> {
         verbose: cli.verbose,
         progress: !cli.no_progress && !cli.quiet && io::stderr().is_terminal(),
         local: cli.local,
+        timings,
     };
 
-    match cli.command {
+    let result = match cli.command {
         CliCommand::Init(args) => project_commands::init(&context, args),
         CliCommand::Sync(args) => {
             let source = context.project()?;
@@ -92,6 +101,11 @@ pub fn execute(cli: Cli) -> Result<i32> {
         CliCommand::Clean(args) => execution_commands::lake_command(&context, "clean", args),
         CliCommand::Check(args) => execution_commands::check(&context, args),
         CliCommand::Shake(args) => shake_commands::shake(&context, args),
+        CliCommand::Profile(args) => profile_commands::profile(&context, args),
+        CliCommand::Graph(args) => graph_commands::graph(&context, args),
+        CliCommand::Verify(args) => verify_commands::verify(&context, args),
+        CliCommand::Bundle(args) => bundle_commands::bundle(&context, args),
+        CliCommand::Watch(args) => watch_commands::watch(&context, args),
         CliCommand::Deps(args) => project_commands::dependencies(&context, args),
         CliCommand::Tree(args) => project_commands::dependency_tree(&context, args),
         CliCommand::Why(args) => project_commands::why_dependency(&context, args),
@@ -112,10 +126,26 @@ pub fn execute(cli: Cli) -> Result<i32> {
             generate(shell, &mut Cli::command(), "lev", &mut io::stdout());
             Ok(0)
         }
+    };
+    if timings {
+        eprintln!(
+            "lev timing: total {:.3} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
     }
+    result
 }
 
 impl AppContext {
+    fn timing(&self, phase: &str, started: std::time::Instant) {
+        if self.timings {
+            eprintln!(
+                "lev timing: {phase} {:.3} ms",
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+    }
+
     /// Discover the nearest Lean project from this context's starting path.
     fn project(&self) -> Result<Project> {
         Project::discover(&self.project_start)

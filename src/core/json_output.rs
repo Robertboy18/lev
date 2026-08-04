@@ -13,9 +13,13 @@ pub(crate) mod schema {
     pub const AUDIT: &str = "lev.cli.audit/v1";
     pub const DEPS: &str = "lev.cli.deps/v1";
     pub const SHAKE: &str = "lev.cli.shake/v1";
+    pub const PROFILE: &str = "lev.cli.profile/v1";
+    pub const GRAPH: &str = "lev.cli.graph/v1";
+    pub const VERIFY: &str = "lev.cli.verify/v1";
     pub const TREE: &str = "lev.cli.tree/v1";
     pub const WHY: &str = "lev.cli.why/v1";
     pub const WORKSPACE_LIST: &str = "lev.cli.workspace.list/v1";
+    pub const WORKSPACE_SHAKE: &str = "lev.cli.workspace.shake/v1";
     pub const CACHE_ARTIFACTS_STATUS: &str = "lev.cli.cache.artifacts.status/v1";
     pub const CACHE_ARTIFACTS_VERIFY: &str = "lev.cli.cache.artifacts.verify/v1";
     pub const CACHE_ARTIFACTS_GC: &str = "lev.cli.cache.artifacts.gc/v1";
@@ -37,9 +41,13 @@ pub(crate) mod schema {
         AUDIT,
         DEPS,
         SHAKE,
+        PROFILE,
+        GRAPH,
+        VERIFY,
         TREE,
         WHY,
         WORKSPACE_LIST,
+        WORKSPACE_SHAKE,
         CACHE_ARTIFACTS_STATUS,
         CACHE_ARTIFACTS_VERIFY,
         CACHE_ARTIFACTS_GC,
@@ -75,7 +83,7 @@ where
         .context("failed to write JSON output")
 }
 
-fn render<T>(schema: &'static str, data: &T) -> Result<Vec<u8>>
+pub(crate) fn render<T>(schema: &'static str, data: &T) -> Result<Vec<u8>>
 where
     T: Serialize + ?Sized,
 {

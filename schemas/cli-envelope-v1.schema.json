@@ -18,7 +18,9 @@
         "lev.cli.cache.remote.pull/v1",
         "lev.cli.cache.remote.push/v1",
         "lev.cli.deps/v1",
+        "lev.cli.graph/v1",
         "lev.cli.outdated/v1",
+        "lev.cli.profile/v1",
         "lev.cli.shake/v1",
         "lev.cli.tool.list/v1",
         "lev.cli.tool.gc/v1",
@@ -29,8 +31,10 @@
         "lev.cli.toolchain.index.list/v1",
         "lev.cli.toolchain.index.verify/v1",
         "lev.cli.tree/v1",
+        "lev.cli.verify/v1",
         "lev.cli.why/v1",
-        "lev.cli.workspace.list/v1"
+        "lev.cli.workspace.list/v1",
+        "lev.cli.workspace.shake/v1"
       ]
     },
     "data": {

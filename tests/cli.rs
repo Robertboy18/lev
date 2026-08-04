@@ -683,6 +683,18 @@ fn json_data(output: &Output, expected_schema: &str) -> serde_json::Value {
         .clone()
 }
 
+fn wait_for_line_count(path: &Path, expected: usize, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while fs::read_to_string(path).unwrap_or_default().lines().count() < expected {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {expected} lines in {}",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[path = "cli/automation.rs"]
 mod automation;
 #[path = "cli/cache.rs"]
