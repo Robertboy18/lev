@@ -29,11 +29,11 @@ struct ProfileReport {
     requested_repeats: u32,
     completed_repeats: u32,
     samples_ms: Vec<f64>,
-    summary: ProfileSummary,
+    summary: Option<ProfileSummary>,
     exit_code: i32,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Serialize)]
 struct ProfileSummary {
     min_ms: f64,
     median_ms: f64,
@@ -80,7 +80,7 @@ pub(super) fn profile(context: &AppContext, args: ProfileArgs) -> Result<i32> {
                     requested_repeats: args.repeat,
                     completed_repeats: 0,
                     samples_ms: Vec::new(),
-                    summary: ProfileSummary::default(),
+                    summary: None,
                     exit_code: code,
                 },
             );
@@ -127,6 +127,7 @@ fn run_once(
 ) -> Result<i32> {
     let mut command = project_command(context, project, args, install_toolchain)?;
     if capture_stdout {
+        command.stdin(Stdio::inherit());
         let output = command
             .output()
             .with_context(|| format!("failed to start {}", display_os_command(args)))?;
@@ -150,9 +151,9 @@ fn run_once(
     }
 }
 
-fn summarize(samples: &[f64]) -> ProfileSummary {
+fn summarize(samples: &[f64]) -> Option<ProfileSummary> {
     if samples.is_empty() {
-        return ProfileSummary::default();
+        return None;
     }
     let mut ordered = samples.to_vec();
     ordered.sort_by(f64::total_cmp);
@@ -162,12 +163,12 @@ fn summarize(samples: &[f64]) -> ProfileSummary {
     } else {
         ordered[middle]
     };
-    ProfileSummary {
+    Some(ProfileSummary {
         min_ms: ordered[0],
         median_ms: median,
         mean_ms: ordered.iter().sum::<f64>() / ordered.len() as f64,
         max_ms: ordered[ordered.len() - 1],
-    }
+    })
 }
 
 fn emit_profile(args: &ProfileArgs, report: ProfileReport) -> Result<i32> {
@@ -188,13 +189,14 @@ fn emit_profile(args: &ProfileArgs, report: ProfileReport) -> Result<i32> {
         for (index, sample) in report.samples_ms.iter().enumerate() {
             text.push_str(&format!("  {:>4}: {:>10.3} ms\n", index + 1, sample));
         }
-        text.push_str(&format!(
-            "  min {:>10.3} ms  median {:>10.3} ms  mean {:>10.3} ms  max {:>10.3} ms\n",
-            report.summary.min_ms,
-            report.summary.median_ms,
-            report.summary.mean_ms,
-            report.summary.max_ms
-        ));
+        if let Some(summary) = &report.summary {
+            text.push_str(&format!(
+                "  min {:>10.3} ms  median {:>10.3} ms  mean {:>10.3} ms  max {:>10.3} ms\n",
+                summary.min_ms, summary.median_ms, summary.mean_ms, summary.max_ms
+            ));
+        } else {
+            text.push_str("  no measured samples\n");
+        }
         text.into_bytes()
     };
     if let Some(path) = &args.output {

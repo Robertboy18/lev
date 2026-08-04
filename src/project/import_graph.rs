@@ -178,20 +178,19 @@ fn module_from_path(path: &Path) -> Result<String> {
     for component in without_extension.components() {
         match component {
             Component::CurDir => {}
-            Component::Normal(value) => components.push(
-                value
-                    .to_str()
-                    .map(str::to_owned)
-                    .context("Lean source path is not UTF-8")?,
-            ),
+            Component::Normal(value) => {
+                let value = value.to_str().context("Lean source path is not UTF-8")?;
+                components.push(render_module_component(value).with_context(|| {
+                    format!(
+                        "Lean source path {} does not map to a valid module name",
+                        path.display()
+                    )
+                })?);
+            }
             _ => bail!("Lean source path is not project-relative"),
         }
     }
-    if components.is_empty()
-        || components
-            .iter()
-            .any(|component| !valid_module_component(component))
-    {
+    if components.is_empty() {
         bail!(
             "Lean source path {} does not map to a valid module name",
             path.display()
@@ -202,52 +201,132 @@ fn module_from_path(path: &Path) -> Result<String> {
 
 fn valid_module_component(value: &str) -> bool {
     let mut characters = value.chars();
-    characters
-        .next()
-        .is_some_and(|character| character == '_' || character.is_alphabetic())
-        && characters
-            .all(|character| character == '_' || character == '\'' || character.is_alphanumeric())
+    characters.next().is_some_and(valid_identifier_start) && characters.all(valid_identifier_rest)
+}
+
+fn valid_identifier_start(character: char) -> bool {
+    let value = character as u32;
+    character == '_'
+        || character.is_ascii_alphabetic()
+        || (0x03b1..=0x03c9).contains(&value) && value != 0x03bb
+        || (0x0391..=0x03a9).contains(&value) && !matches!(value, 0x03a0 | 0x03a3)
+        || (0x03ca..=0x03fb).contains(&value)
+        || (0x1f00..=0x1ffe).contains(&value)
+        || (0x2100..=0x214f).contains(&value)
+        || (0x1d49c..=0x1d59f).contains(&value)
+        || (0x00c0..=0x00ff).contains(&value) && !matches!(value, 0x00d7 | 0x00f7)
+        || (0x0100..=0x017f).contains(&value)
+}
+
+fn valid_identifier_rest(character: char) -> bool {
+    let value = character as u32;
+    character.is_ascii_alphanumeric()
+        || matches!(character, '_' | '\'' | '!' | '?')
+        || valid_identifier_start(character)
+        || (0x2080..=0x2089).contains(&value)
+        || (0x2090..=0x209c).contains(&value)
+        || (0x1d62..=0x1d6a).contains(&value)
+        || value == 0x2c7c
+}
+
+fn render_module_component(value: &str) -> Result<String> {
+    if valid_module_component(value) {
+        Ok(value.to_owned())
+    } else if value.contains('»') {
+        bail!("module component {value:?} contains an unescapable `»`")
+    } else {
+        Ok(format!("«{value}»"))
+    }
 }
 
 fn parse_imports(source: &str) -> Vec<String> {
     let stripped = strip_comments(source);
+    let mut rest = stripped.trim_start();
     let mut imports = BTreeSet::new();
-    for line in stripped.lines() {
-        let mut words = line.split_whitespace();
-        let Some(first) = words.next() else {
-            continue;
-        };
-        let import = if first == "import" {
-            true
-        } else if matches!(first, "public" | "private") {
-            words.next() == Some("import")
-        } else {
-            false
-        };
-        if !import {
-            continue;
-        }
-        for word in words {
-            let module = word.trim_matches(|character: char| matches!(character, ',' | ';'));
-            if valid_module_name(module) {
-                imports.insert(module.to_owned());
-            }
-        }
+    if let Some(after_module) = consume_keyword(rest, "module") {
+        rest = after_module;
+    }
+    if let Some(after_prelude) = consume_keyword(rest, "prelude") {
+        rest = after_prelude;
+    }
+    while let Some((module, after_import)) = parse_import(rest) {
+        imports.insert(module);
+        rest = after_import.trim_start();
     }
     imports.into_iter().collect()
 }
 
-fn valid_module_name(value: &str) -> bool {
-    !value.is_empty() && value.split('.').all(valid_module_component)
+fn parse_import(value: &str) -> Option<(String, &str)> {
+    let mut rest = value;
+    if let Some(after_public) = consume_keyword(rest, "public") {
+        rest = after_public;
+    } else if let Some(after_private) = consume_keyword(rest, "private") {
+        // Preserve the spelling accepted by earlier graph releases.
+        rest = after_private;
+    }
+    if let Some(after_meta) = consume_keyword(rest, "meta") {
+        rest = after_meta;
+    }
+    rest = consume_keyword(rest, "import")?;
+    if let Some(after_all) = consume_keyword(rest, "all") {
+        rest = after_all;
+    }
+    let (module, rest) = parse_module_name(rest)?;
+    Some((module, rest))
+}
+
+fn consume_keyword<'a>(value: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = value.strip_prefix(keyword)?;
+    let first = rest.chars().next()?;
+    first.is_whitespace().then(|| rest.trim_start())
+}
+
+fn parse_module_name(value: &str) -> Option<(String, &str)> {
+    let mut rest = value;
+    let mut components = Vec::new();
+    loop {
+        let (component, after_component) = parse_module_component(rest)?;
+        components.push(render_module_component(component).ok()?);
+        rest = after_component;
+        let Some(after_dot) = rest.strip_prefix('.') else {
+            break;
+        };
+        rest = after_dot;
+    }
+    Some((components.join("."), rest))
+}
+
+fn parse_module_component(value: &str) -> Option<(&str, &str)> {
+    if let Some(escaped) = value.strip_prefix('«') {
+        let end = escaped.find('»')?;
+        return Some((&escaped[..end], &escaped[end + '»'.len_utf8()..]));
+    }
+
+    let mut characters = value.char_indices();
+    let (_, first) = characters.next()?;
+    if !valid_identifier_start(first) {
+        return None;
+    }
+    let mut end = first.len_utf8();
+    for (index, character) in characters {
+        if !valid_identifier_rest(character) {
+            break;
+        }
+        end = index + character.len_utf8();
+    }
+    Some((&value[..end], &value[end..]))
 }
 
 fn strip_comments(source: &str) -> String {
     let bytes = source.as_bytes();
+    let identifier_start = "«".as_bytes();
+    let identifier_end = "»".as_bytes();
     let mut output = Vec::with_capacity(source.len());
     let mut index = 0;
     let mut block_depth = 0_u32;
     let mut line_comment = false;
     let mut in_string = false;
+    let mut in_escaped_identifier = false;
     let mut escaped = false;
 
     while index < bytes.len() {
@@ -278,6 +357,17 @@ fn strip_comments(source: &str) -> String {
             }
             continue;
         }
+        if in_escaped_identifier {
+            if bytes[index..].starts_with(identifier_end) {
+                output.extend_from_slice(identifier_end);
+                index += identifier_end.len();
+                in_escaped_identifier = false;
+            } else {
+                output.push(byte);
+                index += 1;
+            }
+            continue;
+        }
         if in_string {
             output.push(if byte == b'\n' { b'\n' } else { b' ' });
             if escaped {
@@ -298,6 +388,10 @@ fn strip_comments(source: &str) -> String {
             block_depth = 1;
             output.extend_from_slice(b"  ");
             index += 2;
+        } else if bytes[index..].starts_with(identifier_start) {
+            in_escaped_identifier = true;
+            output.extend_from_slice(identifier_start);
+            index += identifier_start.len();
         } else if byte == b'"' {
             in_string = true;
             output.push(b' ');
@@ -333,7 +427,12 @@ fn selected_modules(
             };
             module_from_path(relative)?
         } else {
-            root.clone()
+            let (module, remaining) = parse_module_name(root)
+                .with_context(|| format!("module {root:?} is not a valid Lean module name"))?;
+            if !remaining.is_empty() {
+                bail!("module {root:?} is not a valid Lean module name");
+            }
+            module
         };
         if !modules.contains(&normalized) || !sources.contains_key(&normalized) {
             bail!("module {root:?} is not a Lean source in this project");
@@ -459,24 +558,64 @@ fn portable_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use tempfile::tempdir;
 
     use crate::project::Project;
 
-    use super::{ImportGraph, parse_imports};
+    use super::{ImportGraph, module_from_path, parse_imports};
 
     #[test]
     fn parses_modifiers_and_ignores_comments_and_strings() {
         let imports = parse_imports(
             r#"-- import Fake
+module
 public import Mathlib.Data.Nat.Prime
+meta import Project.Meta
+public meta import all Project.PublicMeta
+import all Project.All import Project.SameLine
 /- import Also.Fake -/
 private import Project.Helper
 def text := "import String.Fake"
+import After.Body
 "#,
         );
-        assert_eq!(imports, ["Mathlib.Data.Nat.Prime", "Project.Helper"]);
+        assert_eq!(
+            imports,
+            [
+                "Mathlib.Data.Nat.Prime",
+                "Project.All",
+                "Project.Helper",
+                "Project.Meta",
+                "Project.PublicMeta",
+                "Project.SameLine"
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_and_renders_escaped_module_components() {
+        let imports =
+            parse_imports("module\nimport «foo-bar»\nimport «foo.bar».Baz\nimport «hello world»\n");
+        assert_eq!(imports, ["«foo-bar»", "«foo.bar».Baz", "«hello world»"]);
+        assert_eq!(
+            module_from_path(Path::new("foo-bar.lean")).unwrap(),
+            "«foo-bar»"
+        );
+        assert_eq!(
+            module_from_path(Path::new("foo.bar/Baz.lean")).unwrap(),
+            "«foo.bar».Baz"
+        );
+        assert_eq!(module_from_path(Path::new("中文.lean")).unwrap(), "«中文»");
+    }
+
+    #[test]
+    fn preserves_comment_and_string_markers_inside_escaped_names() {
+        let imports = parse_imports(
+            "module\nimport «foo--bar»\nimport «foo/-bar»\nimport «foo\"bar»\n-- import Fake\n",
+        );
+        assert_eq!(imports, ["«foo\"bar»", "«foo--bar»", "«foo/-bar»"]);
     }
 
     #[test]
@@ -524,5 +663,37 @@ def text := "import String.Fake"
                 .all(|node| !node.imports.iter().any(|import| import == "Mathlib"))
         );
         assert!(graph.edges.iter().all(|edge| !edge.external));
+    }
+
+    #[test]
+    fn matches_escaped_imports_to_project_source_paths() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join("lean-toolchain"), "test\n").unwrap();
+        fs::write(
+            temp.path().join("Main.lean"),
+            "module\nmeta import all «foo-bar»\nimport «foo.bar»\nimport «hello world»\n",
+        )
+        .unwrap();
+        fs::write(temp.path().join("foo-bar.lean"), "def a := 1\n").unwrap();
+        fs::write(temp.path().join("foo.bar.lean"), "def b := 2\n").unwrap();
+        fs::write(temp.path().join("hello world.lean"), "def c := 3\n").unwrap();
+        let project = Project::load(temp.path().to_owned()).unwrap();
+
+        let graph = ImportGraph::inspect(&project, &["Main".to_owned()], false).unwrap();
+        assert_eq!(graph.nodes.len(), 4);
+        assert_eq!(graph.edges.len(), 3);
+        assert!(graph.edges.iter().all(|edge| !edge.external));
+        assert!(graph.nodes.iter().any(|node| node.module == "«foo-bar»"));
+        assert!(graph.nodes.iter().any(|node| node.module == "«foo.bar»"));
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.module == "«hello world»")
+        );
+
+        let graph = ImportGraph::inspect(&project, &["«foo-bar»".to_owned()], false).unwrap();
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].path, "foo-bar.lean");
     }
 }

@@ -189,6 +189,83 @@ fn profile_graph_verify_and_timings_have_stable_reports() {
 }
 
 #[test]
+fn profile_json_inherits_stdin_and_reports_failed_warmups_without_fake_timings() {
+    let fixture = Fixture::new();
+    write_empty_project(&fixture.project, "root");
+
+    let mut child = fixture
+        .lev()
+        .args([
+            "profile",
+            "--no-sync",
+            "--offline",
+            "--json",
+            "--",
+            "sh",
+            "-c",
+            "IFS= read -r value && test \"$value\" = inherited",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"inherited\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_success_ref(&output);
+    let profile = json_data(&output, "lev.cli.profile/v1");
+    assert_eq!(profile["completed_repeats"], 1);
+    assert!(profile["summary"].is_object());
+
+    let failed_warmup = fixture
+        .lev()
+        .args([
+            "profile",
+            "--no-sync",
+            "--offline",
+            "--warmup",
+            "1",
+            "--json",
+            "--",
+            "sh",
+            "-c",
+            "exit 19",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(failed_warmup.status.code(), Some(19));
+    let profile = json_data(&failed_warmup, "lev.cli.profile/v1");
+    assert_eq!(profile["completed_repeats"], 0);
+    assert!(profile["samples_ms"].as_array().unwrap().is_empty());
+    assert!(profile["summary"].is_null());
+
+    let failed_warmup = fixture
+        .lev()
+        .args([
+            "profile",
+            "--no-sync",
+            "--offline",
+            "--warmup",
+            "1",
+            "--",
+            "sh",
+            "-c",
+            "exit 19",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(failed_warmup.status.code(), Some(19));
+    let report = String::from_utf8_lossy(&failed_warmup.stdout);
+    assert!(report.contains("no measured samples"), "{report}");
+    assert!(!report.contains(" min "), "{report}");
+}
+
+#[test]
 fn bundle_is_deterministic_and_excludes_generated_trees() {
     let fixture = Fixture::new();
     write_empty_project(&fixture.project, "root");

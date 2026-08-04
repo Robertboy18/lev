@@ -187,7 +187,7 @@ profile: 5 samples, command `lake build`
   }
 }</code></pre></div>
           <p class="example-caption">This JSON came from a second invocation on the same project, so its samples differ from the terminal capture above.</p>
-          <p>If a measured process fails, lev records that sample's elapsed time, stops immediately, writes a partial report with <code>completed_repeats</code>, and returns the child's exit code. If a warmup fails, no measured sample is reported.</p>
+          <p>If a measured process fails, lev records that sample's elapsed time, stops immediately, writes a partial report with <code>completed_repeats</code>, and returns the child's exit code. If a warmup fails, no measured sample is reported: text output says so directly, and JSON sets <code>summary</code> to <code>null</code> instead of inventing zero timings.</p>
         </section>
 
         <section id="lean-profiler"><h2>Descend into Lean's profiler</h2>
