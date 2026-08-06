@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
@@ -24,7 +24,7 @@
     </header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation">
         <div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
           <div class="nav-group"><p class="nav-group-title">Start</p>
             <a href="index.html" data-page-link="overview">Overview</a>
@@ -32,12 +32,21 @@
           </div>
           <div class="nav-group"><p class="nav-group-title">Core guides</p>
             <a href="environments.html" data-page-link="environments">Environments &amp; cache</a>
-            <a href="imports.html" data-page-link="imports">Imports &amp; graphs</a>
-            <a href="profiling.html" data-page-link="profiling">Profiling</a>
+            <a href="imports.html" data-page-link="imports">Import minimization</a>
+            <a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a>
+            <a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a>
+            <a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a>
+            <a href="profiling.html" data-page-link="profiling">Profiling overview</a>
+            <a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a>
+            <a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a>
+            <a href="inspection.html" data-page-link="inspection">Inspection</a>
             <a href="automation.html" data-page-link="automation">Automation</a>
           </div>
           <div class="nav-group"><p class="nav-group-title">Reference</p>
             <a href="reference.html" data-page-link="reference">Command reference</a>
+            <a href="contracts.html" data-page-link="contracts">JSON contracts</a>
+            <a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a>
+            <a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a>
             <a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a>
           </div>
         </nav></div>
@@ -47,75 +56,98 @@
           <article class="article">
             <header class="page-header">
               <p class="eyebrow">Documentation</p>
-              <h1>Lean environments that remember their work</h1>
-              <p class="lead">lev coordinates Lean toolchains, Lake dependencies, locks, and compatible build artifacts without replacing the files Lean projects already use.</p>
+              <h1>Reproducible Lean work with lev</h1>
+              <p class="lead">Git records the source tree. A reproducible Lean build also depends on the selected toolchain, resolved packages, cache state, and the command used to verify the checkout. lev records and checks that operational state, then delegates the build to Lake and Lean.</p>
               <div class="meta-row"><span>lev 1.0</span><span>Standard Lake projects</span><span>Local and CI workflows</span></div>
             </header>
 
             <section id="why">
               <h2>Why lev exists</h2>
-              <p>I kept coming back to one practical annoyance: a second checkout should not forget everything the first checkout already downloaded, resolved, and built. Lake is excellent at building a package, and elan selects Lean toolchains. The repeated work appears between projects, worktrees, benchmark runs, and CI jobs.</p>
-              <p>lev sits around the normal Lean stack. It resolves the requested environment, verifies locks, attaches shared stores, and then delegates the actual build or command. Your Lakefile, <code>lean-toolchain</code>, and <code>lake-manifest.json</code> remain useful without lev.</p>
-              <aside class="note"><strong>You may not need lev for one stable project.</strong> If elan and Lake already make that project reliable, keep the smaller toolchain. lev becomes useful when several environments must remain isolated but should still reuse compatible work.</aside>
+              <p>lev came out of one boring failure that repeated often enough to deserve a tool. The checkout had the right Lean files, but the surrounding state was fuzzy again: maybe the toolchain drifted, maybe Mathlib moved, maybe the build cache came from another run, maybe nobody remembered which exact sequence of commands had actually passed.</p>
+              <p>lev records and verifies that surrounding state. Lake still owns packages and builds, and Lean still checks the proofs.</p>
+              <aside role="note" class="note"><strong>You may not need lev for every Lean project.</strong> If elan and Lake already make one stable repository easy to manage, keep the smaller stack. lev pays off when you care about locked environments, shared state, import policy, timing evidence, or repeatable automation across several machines.</aside>
             </section>
 
             <section id="model">
               <h2>The mental model</h2>
+              <p>lev prepares the environment, then Lake and Lean handle the build and proof work.</p>
               <figure class="diagram">
-                <figcaption>lev prepares the environment; Lake and Lean still do the language work.</figcaption>
-                <div class="flow" role="img" aria-label="User invokes lev, lev selects and verifies an environment, Lake builds the project, and Lean elaborates and checks the source">
+                <figcaption>lev adds the operational layer around a Lean project without claiming ownership of the language.</figcaption>
+                <div class="flow" role="img" aria-label="You or CI invoke lev, lev selects and verifies an environment, Lake resolves and builds the project, and Lean elaborates and kernel-checks the source">
                   <div class="flow-node"><strong>You or CI</strong><span><code>lev build</code></span></div>
                   <div class="flow-node emphasis"><strong>lev</strong><span>select, lock, cache, run</span></div>
                   <div class="flow-node"><strong>Lake</strong><span>resolve targets and build</span></div>
                   <div class="flow-node"><strong>Lean</strong><span>elaborate and kernel-check</span></div>
                 </div>
               </figure>
-              <div class="table-wrap"><table>
-                <thead><tr><th scope="col">Layer</th><th scope="col">Owns</th><th scope="col">Does not own</th></tr></thead>
-                <tbody>
-                  <tr><th scope="row">elan</th><td>Toolchain aliases and selection</td><td>Package resolution or builds</td></tr>
-                  <tr><th scope="row">Lake</th><td>Packages, targets, manifests, builds</td><td>Cross-project shared environment policy</td></tr>
-                  <tr><th scope="row">lev</th><td>Environment locks, stores, cache coordination, workflows</td><td>Lean elaboration or Lake's build graph</td></tr>
-                </tbody>
-              </table></div>
+              <div class="contrast-grid">
+                <article class="contrast-card primary">
+                  <h3>What still belongs to Lake and Lean</h3>
+                  <ul>
+                    <li>Package descriptions, manifests, and build targets.</li>
+                    <li>Elaboration, kernel checking, code generation, and Lake's job graph.</li>
+                    <li>The compiler and profiler evidence lev later reads back.</li>
+                  </ul>
+                </article>
+                <article class="contrast-card secondary">
+                  <h3>What lev adds around them</h3>
+                  <ul>
+                    <li>Environment locks that say what another checkout should reproduce.</li>
+                    <li>Shared cache and local-workspace coordination that stays reviewable.</li>
+                    <li>Import, profiling, verification, upgrade, bundle, and watch workflows with stable reports.</li>
+                  </ul>
+                </article>
+              </div>
             </section>
 
-            <section id="first-look">
-              <h2>A first look</h2>
-              <p>The daily loop is intentionally boring. There is no activation step and no lev-specific package format. Run lev from any directory inside the project and it discovers the nearest Lake root.</p>
-              <div class="code-pair">
-                <div class="command-block"><div class="command-label">Terminal</div><pre><code>cd algebra-notes
-lev sync
-lev build</code></pre></div>
-                <div class="command-block output-block"><div class="command-label">Captured scratch-project run</div><pre><code>lev: already synchronized 0 Git dependencies:
-0 created, 0 reused, 0 updated;
-0 mirrors created, 0 fetched
-Build completed successfully.</code></pre></div>
+            <section id="first-pass">
+              <h2>A clean first pass</h2>
+              <p>After cloning a project, separate project facts from machine state before spending time on a build. Deleting <code>.lake</code> at this point throws away evidence that the inspection commands can use.</p>
+              <div class="command-block"><div class="command-label">A clean first session</div><pre><code>lev inspect
+lev doctor
+lev lock --check
+lev sync --frozen
+lev build
+lev verify --offline --test</code></pre></div>
+              <div class="command-ladder">
+                <article class="ladder-step">
+                  <div class="ladder-index">01</div>
+                  <div class="ladder-body"><span class="ladder-command">lev inspect</span><h3>Make sure lev found the project you meant</h3><p>Read the Lakefile, manifest, lock, and selected toolchain before changing the checkout.</p></div>
+                </article>
+                <article class="ladder-step">
+                  <div class="ladder-index">02</div>
+                  <div class="ladder-body"><span class="ladder-command">lev doctor</span><h3>Check the machine-facing side</h3><p>If Git, elan, Lean, Lake, cache paths, or workspace state are off, every later failure gets louder and less informative.</p></div>
+                </article>
+                <article class="ladder-step">
+                  <div class="ladder-index">03</div>
+                  <div class="ladder-body"><span class="ladder-command">lev lock --check</span><h3>Reject drift without rewriting anything</h3><p>This is where an intentional toolchain or dependency edit should show itself. If the lock disagrees, decide whether you meant to change the environment before you sync or build.</p></div>
+                </article>
+                <article class="ladder-step">
+                  <div class="ladder-index">04</div>
+                  <div class="ladder-body"><span class="ladder-command">lev sync --frozen</span><h3>Prove the locked environment can still materialize</h3><p>A frozen sync checks that the checkout still describes one reproducible setup. Follow it with one build or verification pass.</p></div>
+                </article>
               </div>
-              <p class="example-caption">Captured with <code>lev -v build</code> on August 4, 2026 from a dependency-free Lean 4.18.0 project. A project with Git dependencies reports nonzero created, reused, updated, mirrored, and fetched counts before Lake's build output.</p>
-              <p><code>lev sync</code> materializes the locked environment. <code>lev build</code> performs the same preflight and then invokes <code>lake build</code>. Add <code>--offline</code> when the run must prove it can use only local state.</p>
             </section>
 
-            <section id="workflows">
-              <h2>What the manual covers</h2>
-              <div class="command-grid">
-                <div><code>Toolchains and locks</code><span>Keep exact Lean and dependency environments available side by side.</span></div>
-                <div><code>Shared caches</code><span>Reuse Git objects and compatible Lake artifacts where their recorded identity matches.</span></div>
-                <div><code>Import minimization</code><span>Ask Lake for compiler-derived dependencies, then validate edits transactionally.</span></div>
-                <div><code>Profiling</code><span>Separate lev overhead, repeated wall-clock measurements, and Lean elaborator traces.</span></div>
-                <div><code>Verification</code><span>Run locks, audit, toolchain, build, test, lint, and import policy in a fixed order.</span></div>
-                <div><code>Automation</code><span>Graph, upgrade, bundle, watch, matrix, and workspace operations with stable reports.</span></div>
-              </div>
+            <section id="guides">
+              <h2>Documentation</h2>
+              <div class="table-wrap"><table><thead><tr><th scope="col">Guide</th><th scope="col">Covers</th></tr></thead><tbody>
+                <tr><th scope="row"><a href="environments.html">Environments and cache</a></th><td>Toolchain selection, locks, offline operation, shared caches, local workspaces, and version matrices.</td></tr>
+                <tr><th scope="row"><a href="imports.html">Import minimization</a></th><td>Replacing broad imports with compiler-derived imports, validating rewrites, and preserving public API intent.</td></tr>
+                <tr><th scope="row"><a href="profiling.html">Profiling</a></th><td>Phase timings, repeated samples, file ranking, baselines, and Lean's native profiler.</td></tr>
+                <tr><th scope="row"><a href="inspection.html">Inspection</a></th><td>Environment diagnosis, dependency revisions, build traces, declaration lookup, and trust analysis.</td></tr>
+                <tr><th scope="row"><a href="automation.html">Automation</a></th><td>Verification gates, dependency upgrades, workspaces, bundles, watch mode, and named tasks.</td></tr>
+                <tr><th scope="row"><a href="reference.html">Command reference</a></th><td>The full command map, common recipes, JSON contracts, and exit behavior.</td></tr>
+              </tbody></table></div>
             </section>
 
             <section id="boundaries">
               <h2>Where lev stops</h2>
-              <p>lev takes care of the environment around a Lean project. The proofs and build graph still belong to Lean, Lake, and the project itself.</p>
               <ul>
-                <li>If a Lean release changes source compatibility, lev can isolate the old and new environments; it cannot migrate the proofs.</li>
-                <li>If Lake cannot build the project, lev cannot repair Lake's target graph. It reports the delegated failure and preserves its exit code.</li>
-                <li>Cached artifacts are reused only across matching compatibility keys and after integrity checks. A cache hit is an optimization, never the source of truth.</li>
-                <li>Import analysis can discover declaration dependencies, but public re-exports and namespace-only effects encode human API intent. Conservative policies and a full rebuild remain necessary.</li>
+                <li>If a Lean release breaks source compatibility, lev can keep the old and new environments isolated. It cannot migrate proofs for you.</li>
+                <li>If Lake cannot build the project, lev cannot repair Lake's target graph. It reports the delegated failure and preserves the child exit code.</li>
+                <li>Import analysis can discover declaration dependencies, but public re-exports and namespace-only effects still need human policy. The rewrite path therefore stays conservative and rebuild-backed.</li>
+                <li>A cache hit is an optimization, never the source of truth. Locks, manifests, and successful delegated commands remain the evidence that matters.</li>
               </ul>
             </section>
 
@@ -125,7 +157,7 @@ Build completed successfully.</code></pre></div>
           </article>
           <nav class="on-this-page" aria-label="On this page">
             <p>On this page</p>
-            <a href="#why">Why lev exists</a><a href="#model">Mental model</a><a href="#first-look">First look</a><a href="#workflows">Manual map</a><a href="#boundaries">Failure boundaries</a>
+            <a href="#why">Why lev exists</a><a href="#model">Mental model</a><a href="#first-pass">First pass</a><a href="#guides">Documentation</a><a href="#boundaries">Failure boundaries</a>
           </nav>
         </div>
       </main>

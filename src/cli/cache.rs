@@ -43,6 +43,7 @@ pub enum CacheCommand {
     },
 
     /// Push and pull authenticated Lake artifact snapshots.
+    #[command(hide = true)]
     Remote {
         #[command(subcommand)]
         command: RemoteCacheCommand,

@@ -3,9 +3,11 @@
 //! Lake resolves general graphs; lev handles edits, rollback, metadata lookup,
 //! and post-resolution checks.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, bail};
 
-use crate::cache::registry;
+use crate::cache::{digest, registry};
 use crate::cli::{AddArgs, OutdatedArgs, PinArgs, RemoveArgs, SyncArgs, UpdateArgs, UpgradeArgs};
 use crate::core::json_output::{self, schema};
 use crate::core::process::checked_status;
@@ -120,7 +122,7 @@ struct DependencyInspection {
     error: Option<String>,
 }
 
-/// Stable serialized form emitted by `lev outdated --json`.
+/// Stable serialized form emitted by `lev deps outdated --json`.
 #[derive(Debug, serde::Serialize)]
 struct DependencyStatus {
     package: String,
@@ -285,7 +287,7 @@ pub(super) fn upgrade(context: &AppContext, args: UpgradeArgs) -> Result<i32> {
         let Some(reservoir) = &inspection.reservoir else {
             if explicitly_selected {
                 bail!(
-                    "dependency {} has no Reservoir identity; use `lev update {}` to preserve its declared revision",
+                    "dependency {} has no Reservoir identity; use `lev deps update {}` to preserve its declared revision",
                     package.name,
                     package.name
                 );
@@ -368,6 +370,16 @@ pub(super) fn upgrade(context: &AppContext, args: UpgradeArgs) -> Result<i32> {
         println!("Dry run; no project files changed");
         return Ok(0);
     }
+    if args.check {
+        return check_upgrade(
+            context,
+            &project,
+            &target_toolchain,
+            &upgrades,
+            changing_toolchain,
+            args.test,
+        );
+    }
 
     ensure_toolchain_name(context, &target_toolchain, true)?;
     let config = lakefile::config_path(&project.root)?;
@@ -375,9 +387,7 @@ pub(super) fn upgrade(context: &AppContext, args: UpgradeArgs) -> Result<i32> {
     let manifest = project.manifest_path();
     let lock = project.lock_path();
     let mut transaction = FileTransaction::capture([&config, &toolchain_file, &manifest, &lock])?;
-    for upgrade in &upgrades {
-        lakefile::set_revision(&config, &upgrade.package, &upgrade.tag)?;
-    }
+    apply_upgrades(&config, &upgrades)?;
     if changing_toolchain {
         atomic_write(&toolchain_file, format!("{target_toolchain}\n").as_bytes())?;
     }
@@ -408,6 +418,83 @@ pub(super) fn upgrade(context: &AppContext, args: UpgradeArgs) -> Result<i32> {
         target_toolchain
     ));
     Ok(0)
+}
+
+fn check_upgrade(
+    context: &AppContext,
+    source: &Project,
+    target_toolchain: &str,
+    upgrades: &[DependencyUpgrade],
+    changing_toolchain: bool,
+    test: bool,
+) -> Result<i32> {
+    ensure_toolchain_name(context, target_toolchain, true)?;
+    let workspace_key = upgrade_workspace_key(target_toolchain, upgrades)?;
+    let project = context.environment_project(source, target_toolchain, &workspace_key)?;
+    let config = lakefile::config_path(&project.root)?;
+    apply_upgrades(&config, upgrades)?;
+    let packages = upgrades
+        .iter()
+        .map(|upgrade| upgrade.package.clone())
+        .collect::<Vec<_>>();
+    if changing_toolchain {
+        run_lake_update(context, &project, &[])?;
+    } else {
+        run_lake_update(context, &project, &packages)?;
+    }
+    sync_after_resolution(context, &project)?;
+    verify_upgraded_revisions(&project, upgrades)?;
+
+    let build = vec![
+        std::ffi::OsString::from("lake"),
+        std::ffi::OsString::from("build"),
+    ];
+    let code = super::execution_commands::run_in_project(context, &project, &build, true)?;
+    if code != 0 {
+        return Ok(code);
+    }
+    if test {
+        let test_command = vec![
+            std::ffi::OsString::from("lake"),
+            std::ffi::OsString::from("test"),
+        ];
+        let code =
+            super::execution_commands::run_in_project(context, &project, &test_command, true)?;
+        if code != 0 {
+            return Ok(code);
+        }
+    }
+    context.info(format!(
+        "upgrade check passed for {target_toolchain}; source project unchanged"
+    ));
+    Ok(0)
+}
+
+fn upgrade_workspace_key(target_toolchain: &str, upgrades: &[DependencyUpgrade]) -> Result<String> {
+    let mut proposal = upgrades
+        .iter()
+        .map(|upgrade| {
+            (
+                upgrade.package.as_str(),
+                upgrade.tag.as_str(),
+                upgrade.revision.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    proposal.sort_unstable();
+    Ok(digest(&serde_json::to_vec(&(
+        "lev-upgrade-check-v2",
+        target_toolchain,
+        proposal,
+    ))?))
+}
+
+fn apply_upgrades(config: &std::path::Path, upgrades: &[DependencyUpgrade]) -> Result<()> {
+    let revisions = upgrades
+        .iter()
+        .map(|upgrade| (upgrade.package.clone(), upgrade.tag.clone()))
+        .collect::<BTreeMap<_, _>>();
+    lakefile::set_revisions(config, &revisions)
 }
 
 fn selected_packages(
@@ -708,5 +795,25 @@ mod tests {
         assert_eq!(display_version_status(&tagged), "v1.2.3");
         assert_eq!(display_version_status(&untagged), "0123456789ab");
         assert_eq!(toolchain::short_name(&tagged.toolchain), "v4.fixture-d");
+    }
+
+    #[test]
+    fn isolated_upgrade_workspace_key_covers_the_complete_proposal() {
+        let alpha = DependencyUpgrade {
+            package: "alpha".to_owned(),
+            from: Some("v1.0.0".to_owned()),
+            tag: "v2.0.0".to_owned(),
+            revision: "aaaaaaaa".to_owned(),
+        };
+        let bravo = DependencyUpgrade {
+            package: "bravo".to_owned(),
+            from: Some("v1.0.0".to_owned()),
+            tag: "v3.0.0".to_owned(),
+            revision: "bbbbbbbb".to_owned(),
+        };
+
+        let alpha_key = upgrade_workspace_key("leanprover/lean4:v4.test", &[alpha]).unwrap();
+        let bravo_key = upgrade_workspace_key("leanprover/lean4:v4.test", &[bravo]).unwrap();
+        assert_ne!(alpha_key, bravo_key);
     }
 }

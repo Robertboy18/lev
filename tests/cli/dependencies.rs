@@ -68,6 +68,39 @@ rev = "v1.0.0"
         original_config
     );
 
+    let original_toolchain = fs::read(fixture.project.join("lean-toolchain")).unwrap();
+    let original_lock = fs::read(fixture.project.join("lev.lock")).ok();
+    fs::write(&fixture.log, "").unwrap();
+    let isolated = fixture
+        .lev()
+        .env("LEV_RESERVOIR_API_URL", &api)
+        .env("LEV_TEST_LAKE_UPDATE_MANIFEST", &replacement_manifest)
+        .args(["deps", "upgrade", "dep", "--check", "--test"])
+        .output()
+        .unwrap();
+    assert_success_ref(&isolated);
+    assert_eq!(
+        fs::read_to_string(fixture.project.join("lakefile.toml")).unwrap(),
+        original_config
+    );
+    assert_eq!(
+        fs::read(fixture.project.join("lake-manifest.json")).unwrap(),
+        old_manifest
+    );
+    assert_eq!(
+        fs::read(fixture.project.join("lean-toolchain")).unwrap(),
+        original_toolchain
+    );
+    assert_eq!(
+        fs::read(fixture.project.join("lev.lock")).ok(),
+        original_lock
+    );
+    let build_paths = tagged_log_paths(&fixture.log, "lake-build");
+    assert_eq!(build_paths.len(), 1);
+    assert_ne!(build_paths[0], fixture.project);
+    let test_paths = tagged_log_paths(&fixture.log, "lake-test");
+    assert_eq!(test_paths, build_paths);
+
     let mismatch = fixture
         .lev()
         .env("LEV_RESERVOIR_API_URL", &api)

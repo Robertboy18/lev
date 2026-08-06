@@ -131,11 +131,11 @@ pub(super) fn shake(context: &AppContext, args: ShakeArgs) -> Result<i32> {
 
 pub(super) fn shake_outcome(context: &AppContext, args: &ShakeArgs) -> Result<ShakeOutcome> {
     if args.fix && context.local {
-        bail!("`lev shake --fix` cannot be combined with `--local`");
+        bail!("`lev inspect imports --fix` cannot be combined with `--local`");
     }
     if args.fix && args.execution.lean.is_some() {
         bail!(
-            "`lev shake --fix` cannot edit a versioned workspace; select the project's default \
+            "`lev inspect imports --fix` cannot edit a versioned workspace; select the project's default \
              toolchain before applying changes"
         );
     }

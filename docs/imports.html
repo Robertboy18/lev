@@ -1,9 +1,9 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Minimize Lean imports safely with lev shake and inspect module graphs.">
-    <title>Imports and graphs | lev</title>
+    <meta name="description" content="Minimize Lean imports safely with lev shake and keep library policy explicit.">
+    <title>Import minimization | lev</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css"><script defer src="vendor/highlight.min.js"></script><script defer src="vendor/highlightjs-lean.min.js"></script><script defer src="app.js"></script>
   </head>
@@ -12,217 +12,129 @@
     <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
-        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Imports &amp; graphs</a><a href="profiling.html" data-page-link="profiling">Profiling</a><a href="automation.html" data-page-link="automation">Automation</a></div>
-        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
       </nav></div></aside>
       <main id="main-content"><div class="article-shell"><article class="article">
-        <header class="page-header"><p class="eyebrow">Core guide</p><h1>Imports and module graphs</h1><p class="lead">Let the compiler tell you what a file uses, but let the project decide what its public API promises.</p></header>
+        <header class="page-header"><p class="eyebrow">Core guide</p><h1>Import minimization</h1><p class="lead">Yes: if a file says <code>import Mathlib</code>, lev can often infer a narrower import set from the exact pinned revision. It keeps compiler evidence separate from library policy and accepts only edits that survive a rebuild.</p></header>
 
-        <section id="problem"><h2>The broad-import problem</h2>
-          <p>Import minimization started with a familiar file: it imports all of Mathlib but uses one small corner of it. <code>import Mathlib</code> is convenient while exploring. In a mature file it can conceal the actual dependency surface, increase invalidation, and make the module graph harder to reason about. Replacing it manually is tedious because source text does not reveal every elaborated declaration dependency.</p>
+        <section id="answer"><h2>Import inference</h2>
+          <p><code>lev shake</code> can infer a smaller import set from compiler-derived dependency evidence in the exact Mathlib revision pinned by the project. You do not need to guess module paths by hand.</p>
+          <p>Source text alone misses declarations introduced through re-exports, notation, generated imports, or a long module chain. lev reads what Lean and Lake recorded for the elaborated file.</p>
           <div class="code-pair">
-            <div class="command-block lean-block"><div class="command-label">Before</div><pre><code class="language-lean">import Mathlib
-
-example (n : ℕ) : n ∣ n := by
-  exact dvd_refl n</code></pre></div>
-            <div class="command-block lean-block"><div class="command-label">Possible result</div><pre><code class="language-lean">import Mathlib.Algebra.Divisibility.Basic
-
-example (n : ℕ) : n ∣ n := by
-  exact dvd_refl n</code></pre></div>
+            <div class="command-block"><div class="command-label">Preview one file</div><pre><code>lev shake MyProject.Proof --explain</code></pre></div>
+            <div class="command-block output-block"><div class="command-label">Preview output</div><pre><code>remove #[import Mathlib]
+add #[import Mathlib.Data.Nat.Prime.Basic]</code></pre></div>
           </div>
-          <p class="example-caption">The exact module depends on the Mathlib revision. lev computes it from the version your project actually uses.</p>
+          <p class="example-caption">The exact replacement depends on the pinned Mathlib revision. lev reports the edit before it writes anything.</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Task</th><th scope="col">Command</th></tr></thead><tbody>
+            <tr><th scope="row">Preview one module with explanations</th><td><code>lev shake MyProject.Proof --explain</code></td></tr>
+            <tr><th scope="row">Check the project and report analyzer coverage</th><td><code>lev shake --check --coverage</code></td></tr>
+            <tr><th scope="row">Preserve existing public and implied imports</th><td><code>lev shake --check --keep-public --keep-implied</code></td></tr>
+            <tr><th scope="row">Apply verified edits and isolate failures</th><td><code>lev shake --fix --isolate --keep-public --keep-implied</code></td></tr>
+          </tbody></table></div>
+        </section>
+
+        <section id="comparison"><h2>What lev adds beyond plain Lake</h2>
+          <p><code>lev shake</code> adds repository policy, rollback, whole-project reporting, and rebuild-backed edits to Lake's dependency evidence.</p>
+          <div class="contrast-grid">
+            <article class="contrast-card primary">
+              <h3>The manual or plain-Lake path</h3>
+              <ul>
+                <li>Read broad imports by eye and guess smaller modules.</li>
+                <li>Or run analysis and then hand-apply edits across files.</li>
+                <li>Rebuild afterward and hope the batch did not leave the repo in a half-broken state.</li>
+              </ul>
+            </article>
+            <article class="contrast-card secondary">
+              <h3>The lev path</h3>
+              <ul>
+                <li>Ask the selected pinned environment for compiler-derived evidence.</li>
+                <li>Apply repository policy such as public-import preservation separately from the evidence itself.</li>
+                <li>Keep an edit only after the requested rebuild succeeds; otherwise restore the original file, or keep only isolated successes.</li>
+              </ul>
+            </article>
+          </div>
+          <p>This is also why lev keeps both visible spellings: <code>lev shake</code> for the everyday workflow and <code>lev inspect imports</code> for the grouped inspection family. The hidden compatibility spelling <code>lev imports</code> remains available for older scripts, but the direct and grouped visible commands are the ones the docs center.</p>
         </section>
 
         <section id="how"><h2>How <code>lev shake</code> works</h2>
-          <p><code>lev imports</code> is a descriptive alias for <code>lev shake</code>. It runs Lake's import analysis in the selected environment, interprets the compiler-derived dependency metadata, and wraps any edit in a validation transaction.</p>
-          <figure class="diagram"><figcaption>The apply path is a transaction, not a search-and-replace.</figcaption>
-            <div class="flow" role="img" aria-label="Analyze compiled dependencies, propose imports, rewrite sources, then rebuild and either keep the edits or restore the original files">
-              <div class="flow-node"><strong>Analyze</strong><span>Lake and compiled dependency data</span></div>
-              <div class="flow-node"><strong>Propose</strong><span>minimal import sets</span></div>
-              <div class="flow-node emphasis"><strong>Validate</strong><span>fresh project rebuild</span></div>
-              <div class="flow-node"><strong>Commit or restore</strong><span>transactional source state</span></div>
+          <p>The apply path is transactional. lev snapshots the source, validates the rewrite, and restores the original when validation fails.</p>
+          <figure class="diagram"><figcaption>Compiler evidence comes first. Source edits come later, behind validation.</figcaption>
+            <div class="flow" role="img" aria-label="Lev analyzes compiled dependencies, proposes imports, applies policy, rewrites source, rebuilds, and then keeps or restores the edit">
+              <div class="flow-node"><strong>Analyze</strong><span>Lean and Lake evidence</span></div>
+              <div class="flow-node"><strong>Propose</strong><span>minimal imports</span></div>
+              <div class="flow-node"><strong>Policy</strong><span>public and implied keeps</span></div>
+              <div class="flow-node emphasis"><strong>Validate</strong><span>fresh rebuild</span></div>
             </div>
           </figure>
-          <ol>
-            <li>Discover target modules from explicit arguments or the package's default targets.</li>
-            <li>Ask the selected Lake toolchain for import suggestions based on compiled dependencies.</li>
-            <li>Apply policy such as preserving public or implied imports and explicit keep annotations.</li>
-            <li>With <code>--fix</code>, snapshot source files, apply suggestions, bypass stale artifact reuse, and rebuild.</li>
-            <li>Keep verified changes. On failure, restore the originals; with isolation enabled, retain only independently verified subsets.</li>
-          </ol>
+          <div class="command-ladder">
+            <article class="ladder-step">
+              <div class="ladder-index">01</div>
+              <div class="ladder-body"><span class="ladder-command">discover targets</span><h3>Resolve explicit modules or the package defaults</h3><p>You can target one file, a set of files, or the default project surface. Coverage mode later reports what was actually analyzed.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">02</div>
+              <div class="ladder-body"><span class="ladder-command">read dependency evidence</span><h3>Ask the selected toolchain what the elaborated file used</h3><p>The result is revision-sensitive because lev reads the pinned build environment rather than a generic Mathlib catalog.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">03</div>
+              <div class="ladder-body"><span class="ladder-command">apply policy</span><h3>Preserve public intent where the compiler cannot see it</h3><p><code>--keep-public</code>, <code>--keep-implied</code>, explicit keep annotations, and Mathlib-style replacement flags decide what should remain visible even when the shortest import list is smaller.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">04</div>
+              <div class="ladder-body"><span class="ladder-command">rebuild and keep or restore</span><h3>Never treat a proposed import edit as accepted until it builds</h3><p>With <code>--fix</code>, lev snapshots the original file, applies the rewrite, rebuilds, and restores the source on failure. <code>--isolate</code> can keep independently verified edits from a larger batch.</p></div>
+            </article>
+          </div>
         </section>
 
-        <section id="commands"><h2>Preview, check, and apply</h2>
-          <div class="command-block"><div class="command-label">One module</div><pre><code>lev imports MyProject.Proof --explain
-lev imports MyProject.Proof --check
-lev imports MyProject.Proof --fix</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Import preview</div><pre><code>MyProject/Proof.lean:
-  remove #[import Mathlib]
-  add #[import Mathlib.Data.Nat.Prime.Basic]</code></pre></div>
-          <p class="example-caption">The module names come from the project's pinned Lake and dependencies.</p>
-          <div class="command-block"><div class="command-label">Conservative project-wide pass</div><pre><code>lev imports \
-  --keep-public \
-  --keep-implied \
-  --explain
-
-lev imports \
-  --keep-public \
-  --keep-implied \
-  --fix \
-  --isolate</code></pre></div>
-          <p><code>--check</code> changes no source and exits unsuccessfully when drift is found, which makes it useful in CI. <code>--fix</code> applies and validates; <code>--apply</code> is an equivalent spelling. <code>--isolate</code> turns a failing batch into smaller verification units so accepted edits do not have to be discarded with an unrelated rejected file.</p>
+        <section id="policy"><h2>Compiler evidence and repository policy</h2>
+          <p>The shortest import set is not automatically the right one. A library may need a broader public API than the compiler can infer from one theorem body.</p>
+          <div class="contrast-grid">
+            <article class="contrast-card primary">
+              <h3>Compiler-derived facts</h3>
+              <ul>
+                <li>Which declarations the elaborated file reached.</li>
+                <li>Which import set is sufficient for the checked source under this pinned revision.</li>
+                <li>Which rewrite passes or fails the validation build.</li>
+              </ul>
+            </article>
+            <article class="contrast-card secondary">
+              <h3>Repository policy</h3>
+              <ul>
+                <li>Whether current public imports should be preserved.</li>
+                <li>Whether implied imports should remain for readability or namespace reasons.</li>
+                <li>Whether a project follows a conservative keep policy or a Mathlib-style replacement policy.</li>
+              </ul>
+            </article>
+          </div>
           <div class="code-pair">
-            <div class="command-block output-block"><div class="command-label">Successful apply</div><pre><code>$ lev imports --fix
-Successfully applied 1 suggestions.
-lev: verifying rewritten imports
-Build completed successfully.
+            <div class="command-block lean-block"><div class="command-label">Before</div><pre><code class="language-lean">import Mathlib
 
-$ lev imports --fix
-lev: imports are already minimal</code></pre></div>
-            <div class="command-block output-block"><div class="command-label">Failed apply and rollback</div><pre><code>$ lev imports --fix
-lev: verifying rewritten imports
-error: unknown constant 'Nat.prime_five'
-lev: import verification failed; restoring the original Lean sources
-$ echo $?
-1</code></pre></div>
+example (n : Nat) : n ∣ n := by
+  exact dvd_refl n</code></pre></div>
+            <div class="command-block lean-block"><div class="command-label">Possible result</div><pre><code class="language-lean">import Mathlib.Algebra.Divisibility.Basic
+
+example (n : Nat) : n ∣ n := by
+  exact dvd_refl n</code></pre></div>
           </div>
-          <p>Running the command again should produce no new edits. That fixed point is a useful check that the accepted source and the analyzer agree. On failure, lev restores the original bytes before returning, so the working tree is not left halfway through an import rewrite.</p>
-          <h3>When one file rejects the batch</h3>
-          <p>Suppose <code>A.lean</code> can use the smaller imports but <code>B.lean</code> relies on a namespace effect that does not appear as a declaration edge. With <code>--isolate</code>, lev verifies the restored baseline, tests smaller subsets, keeps <code>A.lean</code>, and restores <code>B.lean</code>.</p>
-          <div class="command-block output-block"><div class="command-label">Isolated partial result</div><pre><code>$ lev imports --fix --isolate --json &gt; shake.json
-lev: batch verification failed; isolating import edits
-lev: verifying the restored baseline
-lev: rejected the import rewrite for B.lean
-lev: keep the dependency with `import Mathlib -- shake: keep`
-$ echo $?
-1</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">shake.json</div><pre><code class="language-json">{
-  "schema": "lev.cli.shake/v1",
-  "data": {
-    "mode": "isolate",
-    "status": "partially_applied",
-    "files": [
-      { "path": "A.lean", "disposition": "applied" },
-      {
-        "path": "B.lean",
-        "disposition": "rejected",
-        "keep_annotations": [
-          "import Mathlib -- shake: keep"
-        ]
-      }
-    ]
-  }
-}</code></pre></div>
-          <p>Status 1 is intentional here: useful edits were kept, but the requested whole-project minimization did not fully succeed. Review the retained diff, add the suggested keep annotation when it matches project intent, and run the command again.</p>
-          <div class="table-wrap"><table><thead><tr><th>Flag</th><th>Effect</th></tr></thead><tbody>
-            <tr><th><code>--explain</code></th><td>Preview each proposed edit with the declaration that requires it.</td></tr>
-            <tr><th><code>--check</code></th><td>Report drift without touching sources; nonzero exit when changes exist.</td></tr>
-            <tr><th><code>--fix</code> / <code>--apply</code></th><td>Rewrite sources inside a validation transaction.</td></tr>
-            <tr><th><code>--isolate</code></th><td>On failure, split the batch and keep independently verified subsets.</td></tr>
-            <tr><th><code>--keep-public</code></th><td>Preserve public imports as deliberate re-export policy.</td></tr>
-            <tr><th><code>--keep-implied</code></th><td>Preserve imports implied by transitive library boundaries.</td></tr>
-            <tr><th><code>--keep-prefix</code></th><td>Prefer a broader convenience module over its exact leaf imports.</td></tr>
-            <tr><th><code>--no-build</code> / <code>--force</code></th><td>Skip the automatic rebuild of stale <code>.olean</code> files before analysis.</td></tr>
+          <p class="example-caption">The result depends on the pinned Mathlib revision. Public-library policy can still choose to keep a broader import than the compiler minimum.</p>
+          <aside role="note" class="warning"><strong>Always validate import edits with a rebuild.</strong> <a href="https://github.com/leanprover/lean4/issues/12832">Lean issue #12832</a> records a case where a batch import fix left the project broken. lev keeps "suggested" and "accepted" as separate states.</aside>
+        </section>
+
+        <section id="next"><h2>Import documentation</h2>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Page</th><th scope="col">Contents</th></tr></thead><tbody>
+            <tr><th scope="row"><a href="imports-workflows.html#start">Import workflows</a></th><td>Preview, check, apply, rollback, isolation, JSON, and SARIF.</td></tr>
+            <tr><th scope="row"><a href="imports-policy.html#start">Import policy and coverage</a></th><td>Public imports, implied imports, keep annotations, and analyzer coverage.</td></tr>
+            <tr><th scope="row"><a href="imports-in-practice.html#graph">Import graphs and case study</a></th><td>Graphviz output, review artifacts, and the complete FLT project run.</td></tr>
+            <tr><th scope="row"><a href="reference.html#analysis">Command reference</a></th><td>Options, command families, JSON contracts, and common recipes.</td></tr>
           </tbody></table></div>
-          <h3>Requirements and behavior to know</h3>
-          <ul>
-            <li>The selected Lake toolchain must provide its native <code>shake</code> command; older toolchains without it cannot run the analysis.</li>
-            <li>Analyzed files must use the Lean module system (a leading <code>module</code> command). Legacy files are reported, not silently skipped.</li>
-            <li>Stale <code>.olean</code> files are rebuilt automatically before analysis unless <code>--no-build</code> or <code>--force</code> says otherwise, because suggestions derived from stale artifacts would be wrong.</li>
-            <li>Validation builds bypass Lake's artifact cache and end with a freshness check, so a cache hit cannot mask a missing <code>.olean</code>.</li>
-            <li>If the whole-batch rewrite fails under <code>--isolate</code>, lev restores and verifies the baseline first. A broken baseline leaves every file unchanged; a partial result exits with status 1 and reports candidate <code>-- shake: keep</code> annotations for the failing files.</li>
-          </ul>
         </section>
 
-        <section id="coverage"><h2>Know what was actually analyzed</h2>
-          <p>A clean check is only as strong as its coverage. <code>--coverage</code> reports which project files Lake's analysis actually saw, so “no drift” cannot silently mean “nothing was inspected.”</p>
-          <div class="command-block"><div class="command-label">Coverage report</div><pre><code>lev imports --check --coverage
-lev imports --check --coverage --json</code></pre></div>
-          <p>Coverage separates project Lean files into three groups: module files analyzed under the selected roots, module files outside those roots, and legacy files without a leading <code>module</code> command. The JSON envelope (<code>lev.cli.shake/v1</code>) includes each proposed, applied, rejected, or restored file, which makes the report diffable across CI runs.</p>
-        </section>
-
-        <section id="intent"><h2>Compiler evidence is not API intent</h2>
-          <p>A declaration dependency tells us what the current implementation references. It cannot always tell us why an import is present.</p>
-          <div class="table-wrap"><table><thead><tr><th>Import role</th><th>Compiler can usually see it?</th><th>Policy</th></tr></thead><tbody>
-            <tr><th>Declaration used in a proof</th><td>Yes, through elaborated dependencies</td><td>Safe candidate for inference</td></tr>
-            <tr><th>Public re-export</th><td>Not as downstream API intent</td><td>Begin with <code>--keep-public</code></td></tr>
-            <tr><th>Namespace or scoped notation effect</th><td>Not always as a declaration edge</td><td>Keep explicitly when required</td></tr>
-            <tr><th>Implied/transitive boundary</th><td>May look redundant locally</td><td>Use <code>--keep-implied</code> for libraries</td></tr>
-          </tbody></table></div>
-          <div class="command-block lean-block"><div class="command-label">Explicit project intent</div><pre><code class="language-lean">import Mathlib.NumberTheory.NumberField.Basic -- shake: keep
-
--- The import is part of this module's public surface even when
--- the implementation below has no direct declaration edge to it.</code></pre></div>
-        </section>
-
-        <section id="graph"><h2>Inspect the module graph</h2>
-          <p><code>lev graph</code> reads project source imports without crawling generated build trees. Roots can be module names or Lean file paths and can be repeated.</p>
-          <div class="command-block"><div class="command-label">Graph reports</div><pre><code>lev graph MyProject.Main
-lev graph MyProject.Main MyProject.Tests --external
-lev graph MyProject.Main --format json -o imports.json
-lev graph MyProject.Main --external --format dot -o imports.dot
-dot -Tsvg imports.dot -o imports.svg</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Graph output</div><pre><code>3 modules, 3 edges, 0 cycles
-MyProject.Main  MyProject/Main.lean  direct=2 external=0 transitive=2
-  -&gt; MyProject.Algebra
-  -&gt; MyProject.Util
-MyProject.Algebra  MyProject/Algebra.lean  direct=0 external=1 transitive=0
-  -&gt; Mathlib.Algebra.Group.Basic
-MyProject.Util  MyProject/Util.lean  direct=0 external=0 transitive=0</code></pre></div>
-          <p><code>--external</code> includes modules outside the project and renders them as dashed boxes in DOT. The Graphviz <code>dot</code> command is separate software. <code>lev graph</code> exits unsuccessfully if it detects a cycle.</p>
-          <figure class="diagram"><figcaption>Example import graph: solid nodes are project modules; the external Mathlib module is conceptually outside the project boundary.</figcaption>
-            <div class="flow" role="img" aria-label="MyProject Main imports MyProject Algebra, which imports an external Mathlib module, while Main also imports MyProject Util">
-              <div class="flow-node emphasis"><strong>MyProject.Main</strong><span>root module</span></div>
-              <div class="flow-node"><strong>MyProject.Algebra</strong><span>project import</span></div>
-              <div class="flow-node"><strong>Mathlib.Algebra…</strong><span>external import</span></div>
-              <div class="flow-node"><strong>MyProject.Util</strong><span>second direct import</span></div>
-            </div>
-          </figure>
-        </section>
-
-        <section id="flt"><h2>Case study: the FLT project</h2>
-          <p>A toy file can show the mechanism, but I wanted to know what happened when a real library pushed back. On July 28, 2026, lev was evaluated on Imperial College London's <a href="https://github.com/ImperialCollegeLondon/FLT">FLT formalization</a> at commit <a href="https://github.com/ImperialCollegeLondon/FLT/commit/0996e0c76ea248a676fba363be3ea8f04bdf3d44"><code>0996e0c</code></a>. The checkout contained 269 Lean files; the default <code>FLT</code> target exposed 259 module-system files to Lake's analysis.</p>
-          <dl class="facts">
-            <div><dt>Baseline</dt><dd>8,920 jobs / 196.79 s</dd></div>
-            <div><dt>First preview</dt><dd>119 files proposed</dd></div>
-            <div><dt>Verified result</dt><dd>34 files / +9 −54</dd></div>
-          </dl>
-          <div class="steps">
-            <article><h3>Establish the baseline</h3><p>A complete 8,920-job Lake build passed. That exact target, rather than a small demonstration module, became the validation boundary.</p></article>
-            <article><h3>Let the aggressive pass fail</h3><p>The first preview proposed 119 files. Applying all suggestions broke 10 modules, so lev restored every source from its transaction snapshot.</p></article>
-            <article><h3>Preserve library intent</h3><p><code>--keep-public</code> reduced the proposal to 76 files but left one failure. Adding <code>--keep-implied</code> reduced it to 34, exposing the difference between implementation dependencies and re-export policy.</p></article>
-            <article><h3>Annotate two exceptions</h3><p>Two namespace-only imports received <code>-- shake: keep</code>. lev rewrote 33 other files, the complete target passed in 228.04 seconds, and a repeated minimization run found no remaining changes.</p></article>
-          </div>
-          <figure class="plot"><figcaption>FLT proposals after progressively conservative policy<span class="caption-detail">Measured file counts from the July 28, 2026 case study.</span></figcaption>
-            <svg viewBox="0 0 760 300" role="img" aria-labelledby="flt-title flt-desc">
-              <title id="flt-title">Import minimization proposal counts</title><desc id="flt-desc">Aggressive policy proposed 119 files, keeping public imports proposed 76, and keeping public and implied imports proposed 34.</desc>
-              <line class="axis" x1="105" y1="252" x2="720" y2="252"/><line class="grid" x1="105" y1="172" x2="720" y2="172"/><line class="grid" x1="105" y1="92" x2="720" y2="92"/>
-              <rect class="bar-amber" x="150" y="38" width="120" height="214"/><rect class="bar-blue" x="340" y="115" width="120" height="137"/><rect class="bar-green" x="530" y="191" width="120" height="61"/>
-              <text x="194" y="30">119</text><text x="389" y="107">76</text><text x="574" y="183">34</text><text x="153" y="277">aggressive</text><text x="347" y="277">keep public</text><text x="511" y="277">public + implied</text>
-            </svg>
-            <div class="mobile-chart" role="img" aria-label="FLT import proposals: aggressive policy 119 files, keep public imports 76 files, and keep public plus implied imports 34 files.">
-              <div class="mobile-bar-row"><span>Aggressive</span><div class="mobile-bar-track"><i class="fill-amber" style="width:100%"></i></div><strong>119</strong></div>
-              <div class="mobile-bar-row"><span>Keep public</span><div class="mobile-bar-track"><i class="fill-blue" style="width:64%"></i></div><strong>76</strong></div>
-              <div class="mobile-bar-row"><span>Public + implied</span><div class="mobile-bar-track"><i class="fill-green" style="width:29%"></i></div><strong>34</strong></div>
-            </div>
-            <p class="plot-data">The decreasing bars count imports retained to preserve API and elaboration intent.</p>
-          </figure>
-          <aside class="note"><strong>The case study changed lev.</strong> It exposed a false-positive verification path where Lake's artifact cache could report success without producing a changed <code>.olean</code>. Import validation now bypasses that cache and checks freshness before accepting edits.</aside>
-          <p>The timing difference between baseline and validation is not evidence that minimization makes builds slower or faster by a fixed amount. The tested result is narrower: a verified smaller import surface, complete rollback on failure, and a stable fixed point on a large formalization.</p>
-        </section>
-
-        <section id="ci"><h2>Put import policy in CI</h2>
-          <div class="command-block"><div class="command-label">Machine-readable checks</div><pre><code>lev imports --check --json &gt; shake.json
-lev imports --check --sarif lev-shake.sarif
-lev verify --offline --imports</code></pre></div>
-          <p>JSON uses the stable lev schema envelope. SARIF is suitable for review annotations. <code>verify --imports</code> places drift detection after lock, audit, toolchain, and build checks, so the report stops at the first broken prerequisite.</p>
-        </section>
-
-        <nav class="page-nav" aria-label="Previous and next pages"><a href="environments.html"><small>Previous</small><strong>Environments &amp; cache</strong></a><a href="profiling.html"><small>Next</small><strong>Profiling</strong></a></nav>
-        <footer class="site-footer"><p>Start a reusable library with <code>--keep-public --keep-implied</code>. Optimize further only after the public boundary is explicit.</p></footer>
-      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#problem">Broad imports</a><a href="#how">How shake works</a><a href="#commands">Preview and apply</a><a href="#coverage">Coverage</a><a href="#intent">API intent</a><a href="#graph">Module graphs</a><a href="#flt">FLT case study</a><a href="#ci">CI policy</a></nav></div></main>
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="environments.html"><small>Previous</small><strong>Environments &amp; cache</strong></a><a href="imports-workflows.html"><small>Next</small><strong>Import workflows</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#answer">Import inference</a><a href="#comparison">Compared with Lake</a><a href="#how">How shake works</a><a href="#policy">Repository policy</a><a href="#next">Import documentation</a></nav></div></main>
     </div>
   </body>
 </html>

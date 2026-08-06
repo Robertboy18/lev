@@ -1,159 +1,178 @@
 # lev
 
-A [uv](https://github.com/astral-sh/uv)-inspired environment manager for Lean.
-lev keeps toolchains, dependencies, locks, caches, and repeatable commands tied
-to a project while leaving its normal Lean files in charge.
+Git gives you the source tree. It does not give you the exact Lean setup that
+made the tree trustworthy.
 
-I started lev because a second checkout should not forget everything the first
-one downloaded, resolved, and built. Lake still owns the build graph and Lean
-still checks the proofs. lev handles the environment around them.
+I kept running into checkouts that had the right files and the wrong working
+state: the wrong Lean toolchain, a different Mathlib revision, stale build
+artifacts, or a cache nobody wanted to trust. `lev` makes that surrounding
+state explicit while still letting Lake own packages and builds and Lean own
+proof checking.
 
 [Documentation](https://robertboy18.github.io/lev/) |
 [Getting started](https://robertboy18.github.io/lev/getting-started.html) |
+[Import minimization](https://robertboy18.github.io/lev/imports.html) |
+[Profiling](https://robertboy18.github.io/lev/profiling.html) |
+[Automation](https://robertboy18.github.io/lev/automation.html) |
 [Command reference](https://robertboy18.github.io/lev/reference.html)
 
 ## Install
 
-lev is distributed as the Cargo package `lev-cli` and installs the `lev`
-executable:
+`lev` is published as the Cargo package `lev-cli` and installs the `lev`
+binary:
 
 ```console
 cargo install --git https://github.com/Robertboy18/lev --locked lev-cli
 lev --version
-lev doctor
+lev inspect
 ```
 
-Install [Rust](https://rustup.rs/) first if `cargo --version` is unavailable.
-No repository clone is required.
+Install [Rust](https://rustup.rs/) first if `cargo` is not already available.
 
-## First Run
+## First session
 
-Use lev from an existing Lake project:
+If I have just cloned a Lean project and want one build I can trust, this is
+the pass I run:
 
 ```console
 cd my-lean-project
-lev sync
-lev build
-```
-
-Or create one:
-
-```console
-lev init hello --lean stable
-cd hello
-lev build
-lev run lean --version
-```
-
-There is no activation step. Each command discovers the nearest Lake project,
-selects its environment, and passes control to Lake or Lean.
-
-## What lev Adds
-
-| Job | Commands |
-| --- | --- |
-| Recreate a locked environment | `lev lock`, `lev sync --frozen`, `lev build --offline` |
-| Reuse compatible work | `lev build`, `lev --local build`, `lev cache status` |
-| Work across Lean versions | `lev lock --lean ...`, `lev build --lean ...`, `lev matrix` |
-| Edit dependencies safely | `lev add`, `lev remove`, `lev outdated`, `lev upgrade --dry-run` |
-| Minimize and inspect imports | `lev imports`, `lev graph`, `lev workspace shake` |
-| Measure slow work | `lev --timings build`, `lev profile` |
-| Run release checks | `lev audit`, `lev verify`, `lev export` |
-| Automate a project | `lev task`, `lev script`, `lev watch`, `lev bundle` |
-
-lev reads the ordinary `lean-toolchain`, Lakefile, and
-`lake-manifest.json`. It adds `lev.lock` for the environment and integrity data
-that those files do not record. Deleting lev does not turn the project into a
-lev-specific package.
-
-## Import Minimization
-
-A Lean file may import all of Mathlib while using a small part of it. Finding
-the right leaf modules by hand is harder than searching for declaration names:
-syntax, tactics, instances, and elaborators can also create dependencies.
-
-`lev imports` asks the selected Lake toolchain for compiled dependency
-information:
-
-```console
-# Preview one module and explain each proposed import
-lev imports MyProject.Proof --explain
-
-# Apply the rewrite, then rebuild the project
-lev imports MyProject.Proof --apply
-```
-
-For a reusable library, preserve deliberate public and implied imports:
-
-```console
-lev imports --keep-public --keep-implied --explain
-lev imports --keep-public --keep-implied --apply
-```
-
-A preview never edits source and exits with status 1 when it finds changes.
-During an apply run, lev snapshots every affected file, accepts Lake's proposed
-imports, and rebuilds the requested module and package defaults. If
-verification fails, lev restores the snapshot.
-
-Some imports carry API or namespace intent that compiled declaration edges
-cannot express. Keep those explicit:
-
-```lean
-import Mathlib.Some.Module -- shake: keep
-```
-
-The [imports guide](https://robertboy18.github.io/lev/imports.html) explains
-coverage, isolated rewrites, CI output, and the whole-project run against
-Imperial College London's FLT formalization.
-
-## Where lev Fits
-
-| Tool | Responsibility |
-| --- | --- |
-| [elan](https://github.com/leanprover/elan) | Install and select Lean toolchains |
-| [Lake](https://github.com/leanprover/lean4/blob/master/src/lake/README.md) | Resolve packages and execute the build graph |
-| lev | Lock environments, coordinate shared storage, and repeat workflows |
-
-lev can use its verified toolchain store or an existing elan installation. It
-does not replace Lake's package model or Lean's kernel.
-
-## Reproducible Runs
-
-```console
+lev inspect
+lev doctor
 lev lock --check
 lev sync --frozen
-lev build --offline
-lev verify --offline --strict
+lev build
+lev verify --offline --test
 ```
 
-For EFS, NFS, or another shared filesystem, put lev's write-heavy local
-workspace on node-local storage:
+That answers the basic questions in the right order:
+
+- Did `lev` discover the project I meant?
+- Can this machine run the selected Lean and Lake?
+- Does the recorded lock still match the project files?
+- Can the checkout build without quietly changing its environment?
+
+There is no activation step. Each `lev` command discovers the nearest Lake
+project, selects the requested environment, and then delegates to Lake or Lean.
+
+## What lev adds
+
+### Reproducible project environments
+
+`lev` reads the ordinary `lean-toolchain`, Lakefile, and
+`lake-manifest.json`. It adds `lev.lock` for the environment and integrity data
+those files do not record.
 
 ```console
-LEV_CACHE_DIR="$LOCAL_SCRATCH/lev-cache" lev --local build
+lev sync
+lev build
+lev build --offline
 ```
 
-Inspect cache state with `lev cache status` and preview garbage collection with
-`lev cache gc --max-age-days 14`. Nothing is removed until `--apply` is
-present.
+Use `lev` when you want several Lean environments to stay isolated without
+giving up shared caches, deterministic locks, or reviewable setup.
 
-## Read More
+### Import minimization that rebuilds before it keeps the edit
 
+The original motivating question was simple: if a file says `import Mathlib`,
+can the tool figure out the smaller import set for me?
+
+```console
+lev shake MyProject.Proof --explain
+lev shake MyProject.Proof --apply
+```
+
+On a file that only needs one narrow module, the preview looks like this:
+
+```text
+remove #[import Mathlib]
+add #[import Mathlib.Data.Nat.Prime.Basic]
+```
+
+The exact replacement depends on the pinned Mathlib revision. `lev` asks the
+selected Lake toolchain for compiled dependency evidence, applies repository
+policy such as `--keep-public` or `--keep-implied`, and keeps the rewrite only
+after the requested rebuild succeeds.
+
+### Inspection and profiling that stay tied to the selected environment
+
+```console
+lev inspect
+lev inspect dependencies
+lev inspect declaration Nat.add_comm --from Mathlib
+lev --timings build
+lev profile --warmup 1 --repeat 5
+lev inspect performance --files
+```
+
+These commands answer different questions. `inspect` explains the recorded
+state. `--timings` splits one real run into environment, locking, delegated
+command, and total time. `profile` collects repeated command samples. File mode
+cuts a slow project down to the files worth opening in Lean's native profiler.
+
+### Automation you can rerun
+
+```console
+lev verify --offline --test --lint
+lev check --task test --task lint --imports
+lev deps upgrade --check --test
+lev workspace build --keep-going
+lev project bundle --output artifacts/source.lev.tar.zst
+lev watch -- lake build
+```
+
+`lev verify` is the fixed public gate. `lev check` adds repository policy.
+Upgrade checks run in an isolated workspace before they touch the checkout.
+Workspaces, bundles, and watch mode cover the practical parts of a real Lean
+repository once it grows past one local machine.
+
+## Mental model
+
+Lake still owns package resolution and the build graph. Lean still owns
+elaboration, kernel checking, and the native profiler. `lev` sits around them:
+it locks the environment, coordinates shared state, and gives common workflows
+stable command shapes.
+
+Some commands stay short because they come up constantly:
+
+- `lev doctor` / `lev inspect environment`
+- `lev shake` / `lev inspect imports`
+- `lev profile` / `lev inspect performance`
+- `lev verify` / `lev check`
+
+For the fuller command map, use the
+[command reference](https://robertboy18.github.io/lev/reference.html).
+
+## Documentation
+
+The complete guides and references are:
+
+- [Overview](https://robertboy18.github.io/lev/)
+- [Getting started](https://robertboy18.github.io/lev/getting-started.html)
 - [Environments and cache](https://robertboy18.github.io/lev/environments.html)
-  covers environment identity, lock modes, shared artifacts, remote cache
-  snapshots, and version matrices.
-- [Imports and graphs](https://robertboy18.github.io/lev/imports.html) covers
-  compiler-guided import minimization, project coverage, and graph output.
-- [Profiling](https://robertboy18.github.io/lev/profiling.html) separates lev
-  phase timings, repeated command measurements, and Lean's native profiler.
-- [Automation](https://robertboy18.github.io/lev/automation.html) covers
-  verification, upgrades, workspaces, bundles, watch mode, tasks, and scripts.
+- [Import minimization](https://robertboy18.github.io/lev/imports.html)
+- [Profiling](https://robertboy18.github.io/lev/profiling.html)
+- [Inspection](https://robertboy18.github.io/lev/inspection.html)
+- [Automation](https://robertboy18.github.io/lev/automation.html)
+- [Command reference](https://robertboy18.github.io/lev/reference.html)
+- [JSON contracts](https://robertboy18.github.io/lev/contracts.html)
+- [Diagnostics and exits](https://robertboy18.github.io/lev/diagnostics.html)
 
-Run `lev --help` for the complete command list.
+The repo also ships an [agent skill](.agents/skills/lev/SKILL.md) for coding
+agents working in Lean projects.
 
-The repository also includes an
-[agent skill](.agents/skills/lev/SKILL.md) for coding agents working in Lean
-projects.
+## Developing lev
+
+The main local development pass is:
+
+```console
+cargo fmt --all -- --check
+cargo test
+cargo clippy --all-targets --all-features -- -D warnings
+npx --yes html-validate docs/*.html --rule no-inline-style:off
+```
+
+On a network filesystem, set `CARGO_TARGET_DIR` to local scratch before the
+Rust commands so the build cache does not punish every metadata lookup.
 
 ## Contributing
 

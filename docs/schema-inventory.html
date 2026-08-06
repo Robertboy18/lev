@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="The published lev JSON schema inventory, grouped by inspection, dependency, project, cache, toolchain, and workspace command families.">
+    <title>Schema Inventory | lev</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css"><script defer src="vendor/highlight.min.js"></script><script defer src="vendor/highlightjs-lean.min.js"></script><script defer src="app.js"></script>
+  </head>
+  <body data-page="schema-inventory">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
+    <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
+    <div class="docs-shell">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+        <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+      </nav></div></aside>
+      <main id="main-content"><div class="article-shell"><article class="article">
+        <header class="page-header"><p class="eyebrow">Reference</p><h1>Schema inventory</h1><p class="lead">This inventory maps each JSON-emitting command to its exact schema string. It also identifies the command family that produced a saved report.</p>
+          <nav class="chapter-links" aria-label="Machine-readable guide chapters"><p>Machine-readable output</p><a href="contracts.html">JSON contracts</a><a href="schema-inventory.html" aria-current="page">Schema inventory</a><a href="diagnostics.html">Diagnostics &amp; exits</a></nav>
+        </header>
+
+        <section id="overview"><h2>Schema lookup</h2>
+          <p>Treat the schema string as the contract name. Do not infer it from the command spelling. Match on the string in the JSON document itself, then parse the payload that belongs to that version.</p>
+          <p>The tables below are organized by emitting family so you can work in either direction: from command to schema, or from saved report back to the command family that produced it.</p>
+          <div class="code-pair">
+            <div class="command-block"><div class="command-label">Read the contract name from a saved report</div><pre><code class="language-bash">jq -r '.schema' profile.json</code></pre></div>
+            <div class="command-block output-block"><div class="command-label">Example result</div><pre><code class="language-plaintext">lev.cli.inspect.performance/v1</code></pre></div>
+          </div>
+        </section>
+
+        <section id="inspection"><h2>Inspection and policy</h2>
+          <p>This family covers environment inspection, performance reports, import analysis, trust scans, graph output, and workspace-level import summaries.</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Command</th><th scope="col">Schema</th></tr></thead><tbody>
+            <tr><th scope="row"><code>lev inspect --json</code></th><td><code>lev.cli.inspect/v1</code></td></tr>
+            <tr><th scope="row"><code>lev inspect performance --json</code></th><td><code>lev.cli.inspect.performance/v1</code></td></tr>
+            <tr><th scope="row"><code>lev inspect graph --format json</code></th><td><code>lev.cli.graph/v1</code></td></tr>
+            <tr><th scope="row"><code>lev inspect build --json</code></th><td><code>lev.cli.inspect.build/v1</code></td></tr>
+            <tr><th scope="row"><code>lev inspect dependencies --json</code></th><td><code>lev.cli.inspect.dependencies/v1</code></td></tr>
+            <tr><th scope="row"><code>lev inspect environment --json</code></th><td><code>lev.cli.inspect.environment/v1</code></td></tr>
+            <tr><th scope="row"><code>lev doctor --json</code></th><td><code>lev.cli.inspect.environment/v1</code></td></tr>
+            <tr><th scope="row"><code>lev inspect declaration NAME --json</code></th><td><code>lev.cli.inspect.declaration/v1</code></td></tr>
+            <tr><th scope="row"><code>lev inspect trust --json</code></th><td><code>lev.cli.inspect.trust/v1</code></td></tr>
+            <tr><th scope="row"><code>lev check --json</code></th><td><code>lev.cli.check/v1</code></td></tr>
+            <tr><th scope="row"><code>lev verify --json</code></th><td><code>lev.cli.verify/v1</code></td></tr>
+            <tr><th scope="row"><code>lev inspect imports --json</code></th><td><code>lev.cli.shake/v1</code></td></tr>
+            <tr><th scope="row"><code>lev shake --json</code></th><td><code>lev.cli.shake/v1</code></td></tr>
+            <tr><th scope="row"><code>lev profile --json</code></th><td><code>lev.cli.profile/v1</code></td></tr>
+            <tr><th scope="row"><code>lev workspace list --json</code></th><td><code>lev.cli.workspace.list/v1</code></td></tr>
+            <tr><th scope="row"><code>lev workspace shake --json</code></th><td><code>lev.cli.workspace.shake/v1</code></td></tr>
+          </tbody></table></div>
+        </section>
+
+        <section id="dependencies"><h2>Dependencies and project state</h2>
+          <p>These schemas describe dependency selection, revision state, and the explanations around why one revision was chosen over another.</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Command</th><th scope="col">Schema</th></tr></thead><tbody>
+            <tr><th scope="row"><code>lev deps outdated --json</code></th><td><code>lev.cli.outdated/v1</code></td></tr>
+            <tr><th scope="row"><code>lev project audit --json</code></th><td><code>lev.cli.audit/v1</code></td></tr>
+            <tr><th scope="row"><code>lev deps --json</code></th><td><code>lev.cli.deps/v1</code></td></tr>
+            <tr><th scope="row"><code>lev deps tree --json</code></th><td><code>lev.cli.tree/v1</code></td></tr>
+            <tr><th scope="row"><code>lev deps why NAME --json</code></th><td><code>lev.cli.why/v1</code></td></tr>
+          </tbody></table></div>
+        </section>
+
+        <section id="cache"><h2>Cache, toolchains, and tools</h2>
+          <p>This family is mostly operational: cache integrity, remote cache movement, toolchain chunk publishing and installation, toolchain index work, and tool inventory or cleanup.</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Command</th><th scope="col">Schema</th></tr></thead><tbody>
+            <tr><th scope="row"><code>lev cache artifacts status --json</code></th><td><code>lev.cli.cache.artifacts.status/v1</code></td></tr>
+            <tr><th scope="row"><code>lev cache artifacts verify --json</code></th><td><code>lev.cli.cache.artifacts.verify/v1</code></td></tr>
+            <tr><th scope="row"><code>lev cache artifacts gc --json</code></th><td><code>lev.cli.cache.artifacts.gc/v1</code></td></tr>
+            <tr><th scope="row"><code>lev cache remote push REMOTE --signing-key PATH --json</code></th><td><code>lev.cli.cache.remote.push/v1</code></td></tr>
+            <tr><th scope="row"><code>lev cache remote pull REMOTE --public-key PATH --json</code></th><td><code>lev.cli.cache.remote.pull/v1</code></td></tr>
+            <tr><th scope="row"><code>lev toolchain chunks publish TOOLCHAIN REMOTE --signing-key PATH --json</code></th><td><code>lev.cli.toolchain.chunks.publish/v1</code></td></tr>
+            <tr><th scope="row"><code>lev toolchain chunks install TOOLCHAIN REMOTE --public-key PATH --json</code></th><td><code>lev.cli.toolchain.chunks.install/v1</code></td></tr>
+            <tr><th scope="row"><code>lev toolchain index build DIRECTORY --signing-key PATH --public-key PATH --json</code></th><td><code>lev.cli.toolchain.index.build/v1</code></td></tr>
+            <tr><th scope="row"><code>lev toolchain index list REMOTE --public-key PATH --json</code></th><td><code>lev.cli.toolchain.index.list/v1</code></td></tr>
+            <tr><th scope="row"><code>lev toolchain index verify REMOTE --public-key PATH --json</code></th><td><code>lev.cli.toolchain.index.verify/v1</code></td></tr>
+            <tr><th scope="row"><code>lev toolchain gc --json</code></th><td><code>lev.cli.toolchain.gc/v1</code></td></tr>
+            <tr><th scope="row"><code>lev tool list --json</code></th><td><code>lev.cli.tool.list/v1</code></td></tr>
+            <tr><th scope="row"><code>lev tool gc --json</code></th><td><code>lev.cli.tool.gc/v1</code></td></tr>
+          </tbody></table></div>
+        </section>
+
+        <section id="gaps"><h2>Text-first commands</h2>
+          <p><code>lev workspace build</code>, <code>lev workspace run</code>, <code>lev workspace sync</code>, and <code>lev workspace lock</code> do not publish aggregate JSON output. They stream member-by-member work and rely on exit status plus text diagnostics instead. When the workspace operation is import analysis, <code>lev workspace shake --json</code> is the JSON-emitting entry point.</p>
+        </section>
+
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="contracts.html"><small>Previous</small><strong>JSON contracts</strong></a><a href="diagnostics.html"><small>Next</small><strong>Diagnostics &amp; exits</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#overview">How to read</a><a href="#inspection">Inspection</a><a href="#dependencies">Dependencies</a><a href="#cache">Cache and tools</a><a href="#gaps">Text-first commands</a></nav></div></main>
+    </div>
+  </body>
+</html>

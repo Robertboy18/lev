@@ -82,12 +82,14 @@ pub enum ToolchainCommand {
     },
 
     /// Publish or install signed content-defined toolchain chunks.
+    #[command(hide = true)]
     Chunks {
         #[command(subcommand)]
         command: ToolchainChunksCommand,
     },
 
     /// Build or inspect a signed static toolchain CDN index.
+    #[command(hide = true)]
     Index {
         #[command(subcommand)]
         command: ToolchainIndexCommand,

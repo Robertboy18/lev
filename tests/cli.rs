@@ -705,6 +705,8 @@ mod core;
 mod dependencies;
 #[path = "cli/environments.rs"]
 mod environments;
+#[path = "cli/inspect.rs"]
+mod inspect;
 #[path = "cli/toolchains.rs"]
 mod toolchains;
 

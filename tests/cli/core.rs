@@ -132,7 +132,7 @@ fn ordinary_git_projects_build_from_the_generic_dependency_path() {
 }
 
 #[test]
-fn short_help_prioritizes_daily_commands_without_hiding_full_help() {
+fn root_help_exposes_families_and_familiar_direct_commands() {
     let short = Command::new(env!("CARGO_BIN_EXE_lev"))
         .arg("-h")
         .output()
@@ -145,17 +145,60 @@ fn short_help_prioritizes_daily_commands_without_hiding_full_help() {
         .args(["matrix", "-h"])
         .output()
         .unwrap();
+    let imports = Command::new(env!("CARGO_BIN_EXE_lev"))
+        .args(["imports", "-h"])
+        .output()
+        .unwrap();
+    let shake = Command::new(env!("CARGO_BIN_EXE_lev"))
+        .args(["shake", "-h"])
+        .output()
+        .unwrap();
+    let doctor = Command::new(env!("CARGO_BIN_EXE_lev"))
+        .args(["doctor", "-h"])
+        .output()
+        .unwrap();
+    let profile = Command::new(env!("CARGO_BIN_EXE_lev"))
+        .args(["profile", "-h"])
+        .output()
+        .unwrap();
+    let verify = Command::new(env!("CARGO_BIN_EXE_lev"))
+        .args(["verify", "-h"])
+        .output()
+        .unwrap();
     assert_success_ref(&short);
     assert_success_ref(&full);
     assert_success_ref(&advanced);
+    assert_success_ref(&imports);
+    assert_success_ref(&shake);
+    assert_success_ref(&doctor);
+    assert_success_ref(&profile);
+    assert_success_ref(&verify);
 
     let short = String::from_utf8(short.stdout).unwrap();
     let full = String::from_utf8(full.stdout).unwrap();
     let advanced = String::from_utf8(advanced.stdout).unwrap();
+    let imports = String::from_utf8(imports.stdout).unwrap();
+    let shake = String::from_utf8(shake.stdout).unwrap();
+    let doctor = String::from_utf8(doctor.stdout).unwrap();
+    let profile = String::from_utf8(profile.stdout).unwrap();
+    let verify = String::from_utf8(verify.stdout).unwrap();
     assert!(short.contains("  build "), "{short}");
+    assert!(short.contains("  inspect "), "{short}");
+    assert!(full.contains("  inspect "), "{full}");
+    for visible in ["doctor", "shake", "profile", "verify"] {
+        assert!(short.contains(&format!("  {visible} ")), "{short}");
+        assert!(full.contains(&format!("  {visible} ")), "{full}");
+    }
+    assert!(!short.contains("  help "), "{short}");
+    assert!(!full.contains("  help "), "{full}");
     assert!(!short.contains("  matrix "), "{short}");
-    assert!(full.contains("  matrix "), "{full}");
+    assert!(!full.contains("  matrix "), "{full}");
     assert!(advanced.contains("Usage: lev matrix"), "{advanced}");
+    assert!(imports.contains("Usage: lev imports"), "{imports}");
+    assert!(shake.contains("Usage: lev shake"), "{shake}");
+    assert!(doctor.contains("Usage: lev doctor"), "{doctor}");
+    assert!(profile.contains("Usage: lev profile"), "{profile}");
+    assert!(verify.contains("Usage: lev verify"), "{verify}");
 }
 
 #[test]

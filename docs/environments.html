@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,16 +12,16 @@
     <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
-        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Imports &amp; graphs</a><a href="profiling.html" data-page-link="profiling">Profiling</a><a href="automation.html" data-page-link="automation">Automation</a></div>
-        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
       </nav></div></aside>
       <main id="main-content"><div class="article-shell"><article class="article">
-        <header class="page-header"><p class="eyebrow">Core guide</p><h1>Environments and cache</h1><p class="lead">Keep projects isolated by exact inputs, then share only the expensive objects whose compatibility can be checked.</p></header>
+        <header class="page-header"><p class="eyebrow">Core guide</p><h1>Environments and cache</h1><p class="lead">Two checkouts can both say "Lean 4.19" and still resolve different projects. lev names the full environment, then shares only compatible Git objects and Lake artifacts.</p></header>
 
-        <section id="environment"><h2>What is an environment?</h2>
-          <p>The tempting shortcut is to call the Lean version the environment. That is too small. lev combines the selected toolchain, platform, project configuration, Lake manifest, and exact dependency revisions. Two projects may use the same compiler while resolving different dependency trees; those are different environments even if some cached objects can be shared.</p>
+        <section id="environment"><h2>Environment identity</h2>
+          <p>An environment includes more than the Lean version. lev combines the selected toolchain, platform, project configuration, Lake manifest, and exact dependency revisions. Two projects may use the same compiler while resolving different dependency trees; those are different environments even if some cached objects can be shared.</p>
           <figure class="diagram"><figcaption>The identity boundary and the reuse boundary are deliberately different.</figcaption>
             <div class="flow" role="img" aria-label="Project files produce an environment lock, which selects exact dependency checkouts and compatible build artifacts">
               <div class="flow-node"><strong>Project files</strong><span>toolchain, Lakefile, manifest</span></div>
@@ -31,9 +31,21 @@
             </div>
           </figure>
           <p><code>lev.lock</code> complements <code>lake-manifest.json</code>; it does not replace it. Lake's manifest describes resolved package dependencies. lev's lock records the broader environment and integrity information needed to reproduce and audit that resolution.</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Layer</th><th scope="col">What it knows well</th><th scope="col">What still needs another layer</th></tr></thead><tbody>
+            <tr><th scope="row">elan</th><td>Toolchain selectors, aliases, and installed Lean releases.</td><td>Package resolution, project policy, and shared build artifacts.</td></tr>
+            <tr><th scope="row">Lake</th><td>Package manifests, targets, trace keys, and one checkout's build graph.</td><td>A named cross-checkout environment boundary you can lock, compare, and reproduce later.</td></tr>
+            <tr><th scope="row">lev</th><td>The full project environment, its lock, shared stores, and the workflow around Lake.</td><td>Lean elaboration itself and Lake's internal build semantics.</td></tr>
+          </tbody></table></div>
+          <p>The responsibilities stay separate. Lake resolves and builds the project; lev records enough of the surrounding environment to reproduce that build next week, on another machine, or in a benchmark checkout.</p>
+          <div class="command-block"><div class="command-label">Read the local environment without changing it</div><pre><code>lev doctor
+lev doctor --json -o environment.json
+
+# Same report under the inspection family
+lev inspect environment</code></pre></div>
+          <p><code>lev doctor</code> checks the selected Lean and Lake runtime, Git and optional elan installation, project files, cache locations, artifact state, and workspace configuration. It does not synchronize dependencies or create missing project state.</p>
         </section>
 
-        <section id="why"><h2>Why I started caring about the whole environment</h2>
+        <section id="why"><h2>The miniF2F problem</h2>
           <p>I ran into this while testing an LLM on <a href="https://github.com/openai/miniF2F">miniF2F</a>. A result in a paper was tied to more than a theorem set: it depended on a particular Lean release, Mathlib revision, project snapshot, and REPL. Moving between baselines meant reconstructing that combination again, then waiting while another checkout rebuilt dependencies I already had.</p>
           <p>That experience shaped lev's environment model. A benchmark checkout keeps the versions it expects, and its lock identifies the exact combination. Another checkout can reuse Git objects or build artifacts when their keys match, but it does not inherit the first checkout's manifest or toolchain by accident.</p>
           <div class="command-block"><div class="command-label">Two paper baselines</div><pre><code>cd paper-baseline
@@ -49,27 +61,27 @@ lev run python evaluate.py</code></pre></div>
         <section id="select"><h2>Select and retain toolchains</h2>
           <div class="command-block"><div class="command-label">Toolchain operations</div><pre><code>lev toolchain list
 lev toolchain install leanprover/lean4:v4.19.0
-lev pin leanprover/lean4:v4.19.0
+lev project pin leanprover/lean4:v4.19.0
 
 # Run without changing the project's default
 lev build --lean leanprover/lean4:v4.18.0
 
 # Make a resolved alternate environment the default
-lev use leanprover/lean4:v4.19.0</code></pre></div>
+lev project use leanprover/lean4:v4.19.0</code></pre></div>
           <p>An explicit <code>--lean</code> selection creates or reuses a separate environment. It does not flatten the current checkout into whichever version happened to run last. This is useful while testing a release candidate or keeping a paper's original environment available beside current development.</p>
-          <aside class="note"><strong>Aliases may still require elan.</strong> Verified toolchains already in lev's persistent store can run directly. Custom channels and aliases that need resolution may use the configured elan fallback.</aside>
+          <aside role="note" class="note"><strong>Aliases may still require elan.</strong> Verified toolchains already in lev's persistent store can run directly. Custom channels and aliases that need resolution may use the configured elan fallback.</aside>
         </section>
 
         <section id="locks"><h2>Lock modes</h2>
-          <div class="table-wrap"><table><thead><tr><th>Mode</th><th>Question it answers</th><th>Typical use</th></tr></thead><tbody>
-            <tr><th><code>lev lock</code></th><td>What exact environment did this project resolve?</td><td>After intentional dependency or toolchain changes.</td></tr>
-            <tr><th><code>lev sync --locked</code></th><td>Does the lock still agree with project configuration?</td><td>CI that permits materialization but no lock drift.</td></tr>
-            <tr><th><code>lev sync --frozen</code></th><td>Can the recorded environment be used without changing lock or manifest state?</td><td>Release and benchmark reproduction.</td></tr>
-            <tr><th><code>lev sync --offline</code></th><td>Is every required object already local?</td><td>Air-gapped or network-independent checks.</td></tr>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Mode</th><th scope="col">Question it answers</th><th scope="col">Typical use</th></tr></thead><tbody>
+            <tr><th scope="row"><code>lev lock</code></th><td>What exact environment did this project resolve?</td><td>After intentional dependency or toolchain changes.</td></tr>
+            <tr><th scope="row"><code>lev sync --locked</code></th><td>Does <code>lake-manifest.json</code> already exist?</td><td>CI that forbids implicit manifest creation but permits <code>lev.lock</code> refresh.</td></tr>
+            <tr><th scope="row"><code>lev sync --frozen</code></th><td>Can the recorded environment be used without changing lock or manifest state?</td><td>Release and benchmark reproduction.</td></tr>
+            <tr><th scope="row"><code>lev sync --offline</code></th><td>Is every required object already local?</td><td>Air-gapped or network-independent checks.</td></tr>
           </tbody></table></div>
-          <p>“Locked,” “frozen,” and “offline” constrain different things. A lock can be valid while an object is absent locally; offline then fails. Conversely, all objects can be local while project configuration has drifted from the lock; locked mode then fails.</p>
+          <p>“Locked,” “frozen,” and “offline” constrain different things. <code>--locked</code> requires an existing manifest; <code>--frozen</code> verifies <code>lev.lock</code>, the manifest, and project configuration without refreshing the lock; <code>--offline</code> forbids network access. A valid lock can still name an object that is absent locally, so frozen and offline answer separate questions.</p>
           <h3>Recovering from lock drift</h3>
-          <p>When <code>lev sync --locked</code> or <code>--frozen</code> reports drift, the message names what disagrees: the toolchain selector, the Lakefile, the manifest, or a dependency checkout. What you do next depends on whether that change was deliberate.</p>
+          <p>When <code>lev sync --frozen</code> reports lock drift, the message names what disagrees: the toolchain selector, the Lakefile, or the manifest. What you do next depends on whether that change was deliberate.</p>
           <ul>
             <li><strong>The change was intentional.</strong> You edited the Lakefile, pinned a new toolchain, or updated a dependency. Run <code>lev lock</code> to record the new environment, review the <code>lev.lock</code> diff, and commit it with the change that caused it.</li>
             <li><strong>The change was not intentional.</strong> Restore the drifted file from version control and re-run <code>lev sync</code>. Do not regenerate the lock to silence a drift you cannot explain; the drift is the finding.</li>
@@ -78,12 +90,13 @@ lev use leanprover/lean4:v4.19.0</code></pre></div>
         </section>
 
         <section id="cache"><h2>How cache reuse works</h2>
-          <p>The cache design started from one constraint: share expensive work without turning every checkout into the same mutable directory. lev uses separate stores because Git data, toolchains, dependency environments, and build artifacts have different identity and cleanup rules.</p>
+          <p>lev shares expensive work without turning every checkout into the same mutable directory. Git data, toolchains, dependency environments, and build artifacts use separate stores because they have different identity and cleanup rules.</p>
           <dl class="facts">
             <div><dt>Git objects</dt><dd>Content-addressed dependency history</dd></div>
             <div><dt>Toolchains</dt><dd>Persistent verified compiler objects</dd></div>
             <div><dt>Lake artifacts</dt><dd>Toolchain-specific, compatibility-keyed builds</dd></div>
           </dl>
+          <p>Lake decides whether a build artifact matches the trace keys for the current target. lev makes that reuse practical across projects and toolchain variants without collapsing them into one mutable workspace.</p>
           <figure class="plot">
             <figcaption>One fresh-checkout cache comparison<span class="caption-detail">Elapsed wall time measured on one machine with identical project inputs.</span></figcaption>
             <svg viewBox="0 0 760 245" role="img" aria-labelledby="cache-chart-title cache-chart-desc">
@@ -100,7 +113,7 @@ lev use leanprover/lean4:v4.19.0</code></pre></div>
               <div class="mobile-bar-row"><span>Warm lev</span><div class="mobile-bar-track"><i class="fill-green" style="width:2.7%"></i></div><strong>0.26 s</strong></div>
               <div class="mobile-bar-row"><span>Warm Lake</span><div class="mobile-bar-track"><i class="fill-purple" style="width:2.6%"></i></div><strong>0.25 s</strong></div>
             </div>
-            <p class="plot-data">This was one measured comparison, not a general benchmark. The warm lev run and manually configured warm Lake were effectively equal because Lake performs the artifact lookup. lev supplies the shared path, toolchain namespace, locking, verification, and cleanup around it.</p>
+            <p class="plot-data">Read this chart for the mechanism. Once a compatible artifact exists, Lake performs the artifact lookup; lev supplies the shared path, toolchain namespace, locking, verification, and cleanup around it.</p>
           </figure>
           <p>A cache hit may skip work, but it does not weaken the lock. Cache misses fall back to the normal Lake build path.</p>
           <h3>The cache decision, step by step</h3>
@@ -116,12 +129,12 @@ lev use leanprover/lean4:v4.19.0</code></pre></div>
 
         <section id="stores"><h2>Where lev stores state</h2>
           <p>lev separates fast, reconstructible state from persistent verified objects. Both locations are plain directories that can be inspected, relocated, or deleted.</p>
-          <div class="table-wrap"><table><thead><tr><th>Store</th><th>Default</th><th>Override</th><th>Holds</th></tr></thead><tbody>
-            <tr><th>Cache</th><td>Platform cache directory, for example <code>~/.cache/lev</code> on Linux</td><td><code>LEV_CACHE_DIR</code> or <code>--cache-dir</code></td><td>Git objects, dependency environments, Lake artifacts, local workspaces. Safe to delete; the next run rebuilds it.</td></tr>
-            <tr><th>Data</th><td>Platform data directory, for example <code>~/.local/share/lev</code> on Linux</td><td><code>LEV_DATA_DIR</code> or <code>--data-dir</code></td><td>Persistent verified toolchain objects. Deleting it forces toolchains to be reinstalled.</td></tr>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Store</th><th scope="col">Default</th><th scope="col">Override</th><th scope="col">Holds</th></tr></thead><tbody>
+            <tr><th scope="row">Cache</th><td>Platform cache directory, for example <code>~/.cache/lev</code> on Linux</td><td><code>LEV_CACHE_DIR</code> or <code>--cache-dir</code></td><td>Git objects, dependency environments, Lake artifacts, local workspaces. Safe to delete; the next run rebuilds it.</td></tr>
+            <tr><th scope="row">Data</th><td>Platform data directory, for example <code>~/.local/share/lev</code> on Linux</td><td><code>LEV_DATA_DIR</code> or <code>--data-dir</code></td><td>Persistent verified toolchain objects. Deleting it forces toolchains to be reinstalled.</td></tr>
           </tbody></table></div>
-          <p><code>lev cache dir</code> prints the resolved cache location. <code>lev doctor</code> reports that cache alongside the project, runtime, toolchain, Git, Lean, and Lake probes. Use <code>--data-dir</code> or <code>LEV_DATA_DIR</code> when you need to make the persistent toolchain store explicit. Deleting either store never changes project files; the lock still describes what to rebuild.</p>
-          <aside class="note"><strong>Projects on shared filesystems.</strong> When a checkout lives on EFS, NFS, or another networked filesystem, point the cache at node-local scratch and run eligible commands with <code>--local</code> so write-heavy project and <code>.lake</code> state stays off the slow mount:<br><code>LEV_CACHE_DIR="$LOCAL_SCRATCH/lev-cache" lev --local build</code></aside>
+          <p><code>lev cache dir</code> prints the resolved cache location. Bare <code>lev inspect</code> reports both stores alongside the discovered project, selected runtime and toolchain, lock state, and available build metadata. Use <code>--data-dir</code> or <code>LEV_DATA_DIR</code> when you need to make the persistent toolchain store explicit. Deleting either store never changes project files; the lock still describes what to rebuild.</p>
+          <aside role="note" class="note"><strong>Projects on shared filesystems.</strong> When a checkout lives on EFS, NFS, or another networked filesystem, point the cache at node-local scratch and run eligible commands with <code>--local</code> so write-heavy project and <code>.lake</code> state stays off the slow mount:<br><code>LEV_CACHE_DIR="$LOCAL_SCRATCH/lev-cache" lev --local build</code></aside>
         </section>
 
         <section id="cache-ops"><h2>Inspect and maintain cache state</h2>
@@ -137,9 +150,15 @@ lev cache gc --max-age-days 30 --apply
 
 # Show orchestration and reuse decisions during a build
 lev -v build</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Captured verbose build</div><pre><code>lev: already synchronized 0 Git dependencies: 0 created, 0 reused, 0 updated; 0 mirrors created, 0 fetched
+          <div class="command-block output-block"><div class="command-label">Verbose build output</div><pre><code>lev: already synchronized 0 Git dependencies: 0 created, 0 reused, 0 updated; 0 mirrors created, 0 fetched
 Build completed successfully.</code></pre></div>
-          <p class="example-caption">Captured on August 4, 2026 from the dependency-free Lean 4.18.0 scratch project. <code>lev -v build</code> reports the corresponding dependency counts and reuse decisions for your checkout before Lake prints the build result.</p>
+          <p class="example-caption">A dependency-free project reports zeros. A project with Git dependencies prints how many checkouts were created, reused, updated, mirrored, and fetched before Lake prints its own build result.</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">If you see</th><th scope="col">It usually means</th></tr></thead><tbody>
+            <tr><th scope="row"><code>created</code></th><td>lev had to materialize a dependency checkout for this environment.</td></tr>
+            <tr><th scope="row"><code>reused</code></th><td>The dependency state was already present and matched the selected manifest.</td></tr>
+            <tr><th scope="row"><code>updated</code></th><td>A checkout existed but had to move to the manifest's recorded revision.</td></tr>
+            <tr><th scope="row"><code>fetched</code></th><td>The local mirror did not yet contain the objects needed for the selected revision.</td></tr>
+          </tbody></table></div>
         </section>
 
         <section id="remote"><h2>Move artifacts between machines</h2>
@@ -157,9 +176,9 @@ lev cache remote pull https://cache.example.org/lean-artifacts \
   --namespace acme/algebra \
   --public-key cache-signing.pub</code></pre></div>
           <p>The snapshot revision defaults to the current project lock digest. The toolchain and native platform default to the active environment, so a pull cannot silently install an artifact set under an unrelated key. Use <code>--revision</code>, <code>--toolchain</code>, or <code>--platform</code> only when selecting a known snapshot deliberately.</p>
-          <div class="command-block"><div class="command-label">GitHub release publication is a separate path</div><pre><code>lev publish v1.2.0 --dry-run
-lev publish v1.2.0</code></pre></div>
-          <aside class="warning"><strong>Do not treat an arbitrary artifact archive as trusted.</strong> A pull requires an explicit Ed25519 public-key trust anchor, then checks the signature, toolchain, platform, environment keys, and recorded integrity metadata before installation. A source rebuild remains the fallback when those checks do not agree.</aside>
+          <div class="command-block"><div class="command-label">GitHub release publication is a separate path</div><pre><code>lev project publish v1.2.0 --dry-run
+lev project publish v1.2.0</code></pre></div>
+          <aside role="note" class="warning"><strong>Do not treat an arbitrary artifact archive as trusted.</strong> A pull requires an explicit Ed25519 public-key trust anchor, then checks the signature, toolchain, platform, environment keys, and recorded integrity metadata before installation. A source rebuild remains the fallback when those checks do not agree.</aside>
         </section>
 
         <section id="matrix"><h2>Test several Lean versions</h2>
@@ -168,11 +187,10 @@ lev publish v1.2.0</code></pre></div>
   --lean leanprover/lean4:v4.19.0 \
   -- lake build</code></pre></div>
           <p>Before each run, lev prints <code>lev: matrix environment TOOLCHAIN</code>, selects that environment, and streams the delegated command's output unchanged. Without <code>--keep-going</code>, the first failed environment stops the matrix. With it, later environments still run and the command returns the first nonzero status.</p>
-          <p>The matrix command does not add a timing summary; use <code>lev profile</code> when elapsed time is part of the experiment. Shared objects are reused only when their keys permit it, so testing a candidate compiler does not silently rewrite the default project's dependency state.</p>
+          <p><code>lev matrix</code> checks the same command against several toolchains while keeping selection, cache behavior, and exit handling explicit. It does not add a timing summary; <code>lev inspect performance</code> covers experiments where elapsed time matters. Shared objects are reused only when their keys permit it, so testing a candidate compiler does not silently rewrite the default project's dependency state.</p>
         </section>
 
-        <nav class="page-nav" aria-label="Previous and next pages"><a href="getting-started.html"><small>Previous</small><strong>Getting started</strong></a><a href="imports.html"><small>Next</small><strong>Imports &amp; graphs</strong></a></nav>
-        <footer class="site-footer"><p>Use <code>--cache-dir</code> and <code>--data-dir</code> for explicit store locations, or configure <code>LEV_CACHE_DIR</code> and <code>LEV_DATA_DIR</code>.</p></footer>
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="getting-started.html"><small>Previous</small><strong>Getting started</strong></a><a href="imports.html"><small>Next</small><strong>Import minimization</strong></a></nav>
       </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#environment">Environment identity</a><a href="#why">Why it exists</a><a href="#select">Toolchains</a><a href="#locks">Lock modes</a><a href="#cache">Cache model</a><a href="#stores">Store locations</a><a href="#cache-ops">Cache operations</a><a href="#remote">Remote artifacts</a><a href="#matrix">Version matrix</a></nav></div></main>
     </div>
   </body>

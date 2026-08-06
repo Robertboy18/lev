@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Inspect Lean module graphs, wire import policy into CI, and see a full-project lev shake pass.">
+    <title>Imports in practice | lev</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css"><script defer src="vendor/highlight.min.js"></script><script defer src="vendor/highlightjs-lean.min.js"></script><script defer src="app.js"></script>
+  </head>
+  <body data-page="imports-practice">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
+    <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
+    <div class="docs-shell">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+        <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+      </nav></div></aside>
+      <main id="main-content"><div class="article-shell"><article class="article">
+        <header class="page-header"><p class="eyebrow">Core guide</p><h1>Import graphs and full-project passes</h1><p class="lead">Inspect the project import graph, review a complete minimization run on the FLT formalization, and publish import drift in CI.</p></header>
+
+        <section id="graph"><h2>Inspect the module graph</h2>
+          <p><code>lev inspect graph</code> reads project source imports without crawling generated build trees. Roots can be module names or Lean file paths and can be repeated. When an import looks surprising, this is usually the fastest way to see whether the surprise is local or structural.</p>
+          <div class="command-block"><div class="command-label">Graph reports</div><pre><code>lev inspect graph MyProject.Main
+lev inspect graph MyProject.Main MyProject.Tests --external
+lev inspect graph MyProject.Main --format json -o imports.json
+lev inspect graph MyProject.Main --external --format dot -o imports.dot
+dot -Tsvg imports.dot -o imports.svg</code></pre></div>
+          <div class="command-block output-block"><div class="command-label">Graph output</div><pre><code>3 modules, 3 edges, 0 cycles
+MyProject.Main  MyProject/Main.lean  direct=2 external=0 transitive=2
+  -&gt; MyProject.Algebra
+  -&gt; MyProject.Util
+MyProject.Algebra  MyProject/Algebra.lean  direct=0 external=1 transitive=0
+  -&gt; Mathlib.Algebra.Group.Basic
+MyProject.Util  MyProject/Util.lean  direct=0 external=0 transitive=0</code></pre></div>
+          <p><code>--external</code> includes modules outside the project and renders them as dashed boxes in DOT. The Graphviz <code>dot</code> command is separate software. <code>lev inspect graph</code> exits unsuccessfully if it detects a cycle.</p>
+          <figure class="diagram"><figcaption>Example import graph: solid nodes are project modules; the external Mathlib module sits outside the project boundary.</figcaption>
+            <div class="flow" role="img" aria-label="MyProject Main imports MyProject Algebra, which imports an external Mathlib module, while Main also imports MyProject Util">
+              <div class="flow-node emphasis"><strong>MyProject.Main</strong><span>root module</span></div>
+              <div class="flow-node"><strong>MyProject.Algebra</strong><span>project import</span></div>
+              <div class="flow-node"><strong>Mathlib.Algebra...</strong><span>external import</span></div>
+              <div class="flow-node"><strong>MyProject.Util</strong><span>second direct import</span></div>
+            </div>
+          </figure>
+        </section>
+
+        <section id="flt"><h2>Case study: the FLT project</h2>
+          <p>A toy file can show the mechanism, but I wanted to know what happened when a real library pushed back. The trial project was Imperial College London's <a href="https://github.com/ImperialCollegeLondon/FLT">FLT formalization</a> at commit <a href="https://github.com/ImperialCollegeLondon/FLT/commit/0996e0c76ea248a676fba363be3ea8f04bdf3d44"><code>0996e0c</code></a>. That checkout contained 269 Lean files; the default <code>FLT</code> target exposed 259 module-system files to Lake's analysis.</p>
+          <dl class="facts">
+            <div><dt>Baseline</dt><dd>8,920 jobs / 196.79 s</dd></div>
+            <div><dt>First preview</dt><dd>119 files proposed</dd></div>
+            <div><dt>Verified result</dt><dd>34 files / +9 -54</dd></div>
+          </dl>
+          <p>The aggressive pass exposed the files where library policy still mattered. The final counts belong to this checkout; they are not a general shrinkage claim.</p>
+          <div class="command-block"><div class="command-label">Repeat this workflow on another substantial library</div><pre><code>lev sync --frozen
+lev shake --check
+lev shake --check --keep-public
+lev shake --check --keep-public --keep-implied
+lev shake --fix --keep-public --keep-implied --isolate
+lev shake --check --keep-public --keep-implied</code></pre></div>
+          <div class="steps">
+            <article><h3>Establish the baseline</h3><p>A complete 8,920-job Lake build passed. That exact target, rather than a small demonstration module, became the validation boundary.</p></article>
+            <article><h3>Let the aggressive pass fail</h3><p>The first preview proposed 119 files. Applying all suggestions broke 10 modules, so lev restored every source from its transaction snapshot.</p></article>
+            <article><h3>Preserve library intent</h3><p><code>--keep-public</code> reduced the proposal to 76 files but left one failure. Adding <code>--keep-implied</code> reduced it to 34, exposing the difference between implementation dependencies and re-export policy.</p></article>
+            <article><h3>Annotate two exceptions</h3><p>Two namespace-only imports received <code>-- shake: keep</code>. lev rewrote 33 other files, the complete target passed in 228.04 seconds, and a repeated minimization run found no remaining changes.</p></article>
+          </div>
+          <figure class="plot"><figcaption>FLT proposals after progressively conservative policy<span class="caption-detail">File counts from that FLT checkout.</span></figcaption>
+            <svg viewBox="0 0 760 300" role="img" aria-labelledby="flt-title flt-desc">
+              <title id="flt-title">Import minimization proposal counts</title><desc id="flt-desc">Aggressive policy proposed 119 files, keeping public imports proposed 76, and keeping public and implied imports proposed 34.</desc>
+              <line class="axis" x1="105" y1="252" x2="720" y2="252"/><line class="grid" x1="105" y1="172" x2="720" y2="172"/><line class="grid" x1="105" y1="92" x2="720" y2="92"/>
+              <rect class="bar-amber" x="150" y="38" width="120" height="214"/><rect class="bar-blue" x="340" y="115" width="120" height="137"/><rect class="bar-green" x="530" y="191" width="120" height="61"/>
+              <text x="194" y="30">119</text><text x="389" y="107">76</text><text x="574" y="183">34</text><text x="153" y="277">aggressive</text><text x="347" y="277">keep public</text><text x="511" y="277">public + implied</text>
+            </svg>
+            <div class="mobile-chart" role="img" aria-label="FLT import proposals: aggressive policy 119 files, keep public imports 76 files, and keep public plus implied imports 34 files.">
+              <div class="mobile-bar-row"><span>Aggressive</span><div class="mobile-bar-track"><i class="fill-amber" style="width:100%"></i></div><strong>119</strong></div>
+              <div class="mobile-bar-row"><span>Keep public</span><div class="mobile-bar-track"><i class="fill-blue" style="width:64%"></i></div><strong>76</strong></div>
+              <div class="mobile-bar-row"><span>Public + implied</span><div class="mobile-bar-track"><i class="fill-green" style="width:29%"></i></div><strong>34</strong></div>
+            </div>
+            <p class="plot-data">The decreasing bars count imports retained to preserve API and elaboration intent.</p>
+          </figure>
+          <aside role="note" class="note"><strong>The case study changed lev.</strong> It exposed a false-positive verification path where Lake's artifact cache could report success without producing a changed <code>.olean</code>. Import validation now bypasses that cache and checks freshness before accepting edits.</aside>
+          <div class="command-block output-block"><div class="command-label">End state</div><pre><code>$ lev shake --check --keep-public --keep-implied
+lev: imports are already minimal
+
+$ git diff --stat
+34 files changed, 9 insertions(+), 54 deletions(-)</code></pre></div>
+          <p>The timing describes this checkout. The accepted result was a smaller import surface that rebuilt cleanly, restored all files after failed batches, and produced no further changes on the final check.</p>
+        </section>
+
+        <section id="ci"><h2>Put import policy in CI</h2>
+          <p>Once import drift becomes project policy, the result needs to survive code review. JSON is good for scripts and diffs. SARIF is good for annotation UIs. <code>lev check --imports</code> is the blunt whole-project gate when import drift is only one phase in a longer verification run.</p>
+          <div class="command-block"><div class="command-label">Machine-readable checks</div><pre><code>lev shake --check --json &gt; shake.json
+lev shake --check --sarif lev-shake.sarif
+lev check --offline --imports</code></pre></div>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Need</th><th scope="col">Command</th><th scope="col">Why it fits</th></tr></thead><tbody>
+            <tr><th scope="row">Post-process drift in a script</th><td><code>lev shake --check --json</code></td><td>The envelope is versioned and diffable, so scripts can branch on the schema and inspect the file list directly.</td></tr>
+            <tr><th scope="row">Annotate pull requests</th><td><code>lev shake --check --sarif</code></td><td>SARIF gives review systems a standard path for surfacing file-level findings without scraping terminal text.</td></tr>
+            <tr><th scope="row">Fold imports into the full project gate</th><td><code>lev check --offline --imports</code></td><td>The import phase runs only after configuration, lock, dependency, audit, toolchain, and build checks have already passed.</td></tr>
+          </tbody></table></div>
+          <div class="command-block"><div class="command-label">GitHub Actions upload</div><pre><code class="language-plaintext">- run: lev shake --check --sarif lev-shake.sarif
+- if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: lev-shake.sarif</code></pre></div>
+          <p><code>lev check --imports</code> stops at the first broken prerequisite. If the project does not build, report that failure before proposing imports for a file that never elaborated.</p>
+        </section>
+
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="imports-policy.html"><small>Previous</small><strong>Import policy &amp; coverage</strong></a><a href="profiling.html"><small>Next</small><strong>Profiling overview</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#graph">Module graph</a><a href="#flt">FLT case study</a><a href="#ci">CI integration</a></nav></div></main>
+    </div>
+  </body>
+</html>

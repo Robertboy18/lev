@@ -39,6 +39,19 @@ impl Default for EnvironmentConfig {
     }
 }
 
+/// Repository-owned policy applied by `lev check`.
+#[derive(Debug, Clone, Default)]
+pub struct CheckConfig {
+    /// Named commands from `[tasks]`, run after the project builds.
+    pub tasks: Vec<String>,
+    /// Whether import minimization must report a clean tree.
+    pub imports: bool,
+    /// Axioms that project declarations may not depend on.
+    pub denied_axioms: BTreeSet<String>,
+    /// Whether unsafe project declarations are forbidden.
+    pub deny_unsafe: bool,
+}
+
 /// Validated optional settings loaded from one project or workspace root.
 #[derive(Debug, Default)]
 pub struct LevConfig {
@@ -50,6 +63,8 @@ pub struct LevConfig {
     pub matrix_command: Vec<OsString>,
     /// Named commands declared under `[tasks]`.
     pub tasks: BTreeMap<String, Vec<OsString>>,
+    /// Reusable repository checks declared under `[check]`.
+    pub check: CheckConfig,
     /// Relative project paths or glob patterns owned by this monorepo.
     pub workspace_members: Vec<String>,
     /// Relative patterns removed from the expanded member set.
@@ -160,6 +175,53 @@ impl LevConfig {
                     bail!("task {name:?} in {} has an empty command", path.display());
                 }
                 config.tasks.insert(name.to_owned(), command);
+            }
+        }
+
+        if let Some(item) = document.get("check") {
+            let check = item
+                .as_table()
+                .with_context(|| format!("check in {} must be a TOML table", path.display()))?;
+            for (field, _) in check {
+                if !matches!(field, "tasks" | "imports" | "deny-axioms" | "deny-unsafe") {
+                    bail!("unknown check.{field} field in {}", path.display());
+                }
+            }
+            if let Some(item) = check.get("tasks") {
+                let mut seen = BTreeSet::new();
+                for task in string_array(item, "check.tasks", &path)? {
+                    validate_policy_name(&task, "check task")?;
+                    if !seen.insert(task.clone()) {
+                        bail!(
+                            "check.tasks in {} contains duplicate task {task:?}",
+                            path.display()
+                        );
+                    }
+                    if !config.tasks.contains_key(&task) {
+                        bail!(
+                            "check.tasks in {} references unknown task {task:?}",
+                            path.display()
+                        );
+                    }
+                    config.check.tasks.push(task);
+                }
+            }
+            if let Some(item) = check.get("imports") {
+                config.check.imports = boolean_value(item, "check.imports", &path)?;
+            }
+            if let Some(item) = check.get("deny-axioms") {
+                for axiom in string_array(item, "check.deny-axioms", &path)? {
+                    validate_policy_name(&axiom, "denied axiom")?;
+                    if !config.check.denied_axioms.insert(axiom.clone()) {
+                        bail!(
+                            "check.deny-axioms in {} contains duplicate axiom {axiom:?}",
+                            path.display()
+                        );
+                    }
+                }
+            }
+            if let Some(item) = check.get("deny-unsafe") {
+                config.check.deny_unsafe = boolean_value(item, "check.deny-unsafe", &path)?;
             }
         }
 
@@ -555,6 +617,11 @@ fn string_array(item: &Item, field: &str, path: &Path) -> Result<Vec<String>> {
         .collect()
 }
 
+fn boolean_value(item: &Item, field: &str, path: &Path) -> Result<bool> {
+    item.as_bool()
+        .with_context(|| format!("{field} in {} must be a boolean", path.display()))
+}
+
 fn validate_relative_path(path: &Path, selector: &str, config: &Path) -> Result<()> {
     if path.as_os_str().is_empty()
         || path.is_absolute()
@@ -610,7 +677,7 @@ mod tests {
     use super::LevConfig;
 
     #[test]
-    fn reads_matrix_and_task_configuration() {
+    fn reads_matrix_task_and_check_configuration() {
         let temp = tempdir().unwrap();
         fs::write(
             temp.path().join("lev.toml"),
@@ -622,6 +689,12 @@ command = ["lake", "build", "--wfail"]
 [tasks]
 ci = ["lake", "test"]
 check = ["lake", "build", "--wfail"]
+
+[check]
+tasks = ["ci"]
+imports = true
+deny-axioms = ["sorryAx"]
+deny-unsafe = true
 
 [workspace]
 members = ["packages/*", "tools/linter"]
@@ -641,6 +714,18 @@ solver = "release-c"
         assert_eq!(config.matrix_toolchains, ["4.fixture-a", "4.fixture-d"]);
         assert_eq!(config.matrix_command.len(), 3);
         assert_eq!(config.tasks.len(), 2);
+        assert_eq!(config.check.tasks, ["ci"]);
+        assert!(config.check.imports);
+        assert_eq!(
+            config
+                .check
+                .denied_axioms
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["sorryAx"]
+        );
+        assert!(config.check.deny_unsafe);
         assert_eq!(config.workspace_members, ["packages/*", "tools/linter"]);
         assert_eq!(config.workspace_exclude, ["packages/experimental"]);
         let environment = &config.environments["leanprover/lean4:v4.fixture-c"];
@@ -838,6 +923,26 @@ check = ["lake", "build", "--wfail"]
 
         let error = LevConfig::read(temp.path()).unwrap_err().to_string();
         assert!(error.contains("must be a TOML table"), "{error}");
+    }
+
+    #[test]
+    fn rejects_invalid_check_policy() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("lev.toml"),
+            "[check]\ntasks = [\"missing\"]\n",
+        )
+        .unwrap();
+        let error = LevConfig::read(temp.path()).unwrap_err().to_string();
+        assert!(error.contains("unknown task"), "{error}");
+
+        fs::write(temp.path().join("lev.toml"), "[check]\nimports = \"yes\"\n").unwrap();
+        let error = LevConfig::read(temp.path()).unwrap_err().to_string();
+        assert!(error.contains("must be a boolean"), "{error}");
+
+        fs::write(temp.path().join("lev.toml"), "[check]\nextra = true\n").unwrap();
+        let error = LevConfig::read(temp.path()).unwrap_err().to_string();
+        assert!(error.contains("unknown check.extra"), "{error}");
     }
 
     #[test]

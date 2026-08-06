@@ -167,8 +167,16 @@ pub struct UpgradeArgs {
     pub lean: Option<String>,
 
     /// Print the transaction without changing project files.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "check")]
     pub dry_run: bool,
+
+    /// Resolve and build the proposed upgrade in an isolated workspace.
+    #[arg(long)]
+    pub check: bool,
+
+    /// Run the Lake test driver after an isolated upgrade check builds.
+    #[arg(long, requires = "check")]
+    pub test: bool,
 
     /// Ignore fresh Reservoir metadata cached by earlier queries.
     #[arg(long)]
@@ -423,9 +431,84 @@ pub struct ProfileArgs {
     #[arg(short, long, value_name = "PATH")]
     pub output: Option<PathBuf>,
 
+    /// Measure every project Lean file after prebuilding its dependencies.
+    #[arg(long, conflicts_with = "command")]
+    pub files: bool,
+
+    /// Compare file timings with a previously saved baseline.
+    #[arg(long, value_name = "PATH", requires = "files")]
+    pub baseline: Option<PathBuf>,
+
+    /// Save successful file timings as a reusable baseline.
+    #[arg(long, value_name = "PATH", requires = "files")]
+    pub save_baseline: Option<PathBuf>,
+
+    /// Fail when any file exceeds its baseline by this percentage.
+    #[arg(
+        long,
+        value_name = "PERCENT",
+        requires = "baseline",
+        value_parser = nonnegative_f64
+    )]
+    pub max_regression: Option<f64>,
+
     /// Command to measure. Defaults to `lake build`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<OsString>,
+}
+
+/// Arguments retained for the published `lev profile` command contract.
+#[derive(Debug, Args, Clone)]
+pub struct LegacyProfileArgs {
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
+
+    /// Number of measured command executions.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=10_000))]
+    pub repeat: u32,
+
+    /// Unmeasured executions performed before recording samples.
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=10_000))]
+    pub warmup: u32,
+
+    /// Print a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Write the report to a file instead of standard output.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+
+    /// Command to measure. Defaults to `lake build`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<OsString>,
+}
+
+impl From<LegacyProfileArgs> for ProfileArgs {
+    fn from(args: LegacyProfileArgs) -> Self {
+        Self {
+            execution: args.execution,
+            repeat: args.repeat,
+            warmup: args.warmup,
+            json: args.json,
+            output: args.output,
+            files: false,
+            baseline: None,
+            save_baseline: None,
+            max_regression: None,
+            command: args.command,
+        }
+    }
+}
+
+fn nonnegative_f64(value: &str) -> Result<f64, String> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| format!("{value:?} is not a number"))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err("value must be a finite, non-negative number".to_owned());
+    }
+    Ok(parsed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -538,23 +621,271 @@ pub struct LakeArgs {
 
 #[derive(Debug, Args)]
 pub struct CheckArgs {
+    /// Elaborate one Lean source file instead of checking the project.
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with_all = [
+            "clean",
+            "tasks",
+            "imports",
+            "strict",
+            "denied_axioms",
+            "deny_unsafe",
+            "json"
+        ]
+    )]
+    pub file: Option<PathBuf>,
+
+    /// Select a locked Lean environment without changing lean-toolchain.
+    #[arg(long, value_name = "TOOLCHAIN")]
+    pub lean: Option<String>,
+
+    /// Elaborate the selected file without synchronizing dependencies first.
+    #[arg(long)]
+    pub no_sync: bool,
+
+    /// Require all dependencies and the selected toolchain to be local.
+    #[arg(long)]
+    pub offline: bool,
+
+    /// Run `lake clean` before a project build.
+    #[arg(long)]
+    pub clean: bool,
+
+    /// Run this named `[tasks]` command after building. May be repeated.
+    #[arg(long = "task", value_name = "NAME", conflicts_with = "file")]
+    pub tasks: Vec<String>,
+
+    /// Fail when Lake's import minimizer reports source drift.
+    #[arg(long, conflicts_with = "file")]
+    pub imports: bool,
+
+    /// Treat audit portability warnings as project-check failures.
+    #[arg(long, conflicts_with = "file")]
+    pub strict: bool,
+
+    /// Fail when a declaration depends on this axiom. May be repeated.
+    #[arg(long = "deny", value_name = "AXIOM", conflicts_with = "file")]
+    pub denied_axioms: Vec<String>,
+
+    /// Fail when the project contains an unsafe declaration.
+    #[arg(long, conflicts_with = "file")]
+    pub deny_unsafe: bool,
+
+    /// Print a stable machine-readable project report.
+    #[arg(long, conflicts_with = "file")]
+    pub json: bool,
+
+    /// Lake build targets, or a legacy positional Lean file and its arguments.
+    #[arg(value_name = "TARGET_OR_FILE")]
+    pub args: Vec<OsString>,
+}
+
+#[derive(Debug, Args)]
+pub struct DepsListArgs {
+    /// Print machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Dependency inventory and mutation commands.
+#[derive(Debug, Args)]
+pub struct DepsArgs {
+    #[command(subcommand)]
+    pub command: Option<DepsCommand>,
+
+    /// Print the default dependency listing as machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DepsCommand {
+    /// List dependencies recorded in lake-manifest.json.
+    List(DepsListArgs),
+
+    /// Add or replace a dependency in lakefile.toml.
+    Add(AddArgs),
+
+    /// Remove a dependency from lakefile.toml.
+    Remove(RemoveArgs),
+
+    /// Update locked dependencies through Lake.
+    Update(UpdateArgs),
+
+    /// Report newer Reservoir releases compatible with this Lean toolchain.
+    Outdated(OutdatedArgs),
+
+    /// Upgrade direct dependencies using Reservoir compatibility metadata.
+    Upgrade(UpgradeArgs),
+
+    /// Print the resolved dependency tree.
+    Tree(TreeArgs),
+
+    /// Explain why a package is in the dependency graph.
+    Why(WhyArgs),
+}
+
+/// Project analysis, explanations, and explicit repair modes.
+#[derive(Debug, Args)]
+pub struct InspectArgs {
+    #[command(subcommand)]
+    pub command: Option<InspectCommand>,
+
+    /// Print the project diagnosis as machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Write the project diagnosis to a file.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InspectCommand {
+    /// Explain build work, failures, traces, and cache decisions.
+    Build(InspectBuildArgs),
+
+    /// Explain selected revisions and transitive dependency pin disagreements.
+    #[command(visible_alias = "deps")]
+    Dependencies(InspectDependenciesArgs),
+
+    /// Infer, check, or apply minimal Lean imports.
+    Imports(ShakeArgs),
+
+    /// Inspect the project's Lean module import graph.
+    Graph(GraphArgs),
+
+    /// Find the module, source, import, and type of a Lean declaration.
+    #[command(visible_alias = "decl")]
+    Declaration(InspectDeclarationArgs),
+
+    /// Report axioms and unsafe declarations across the project.
+    Trust(InspectTrustArgs),
+
+    /// Measure commands or project Lean files.
+    Performance(ProfileArgs),
+
+    /// Check local tools, paths, project files, caches, and workspace state.
+    #[command(alias = "doctor")]
+    Environment(InspectEnvironmentArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct InspectEnvironmentArgs {
+    /// Print the environment diagnosis as machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Write the diagnosis to a file instead of standard output.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct InspectDependenciesArgs {
+    /// Print a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Write the report to a file instead of standard output.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct InspectBuildArgs {
     #[command(flatten)]
     pub execution: ExecutionArgs,
 
-    /// Lean source file to elaborate.
-    #[arg(value_name = "FILE")]
-    pub file: PathBuf,
+    /// Print a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
 
-    /// Arguments passed to `lake lean`.
+    /// Write the report to a file instead of standard output.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+
+    /// Arguments passed to `lake build`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<OsString>,
 }
 
 #[derive(Debug, Args)]
-pub struct DepsArgs {
-    /// Print machine-readable JSON.
+pub struct InspectDeclarationArgs {
+    /// Fully qualified declaration name.
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Import this module instead of discovering it from built .ilean files.
+    #[arg(long, value_name = "MODULE")]
+    pub from: Option<String>,
+
+    /// Build the project before searching declaration metadata.
+    #[arg(long)]
+    pub build: bool,
+
+    /// Require all dependencies and the selected toolchain to be local.
+    #[arg(long)]
+    pub offline: bool,
+
+    /// Print a stable machine-readable report.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct InspectTrustArgs {
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
+
+    /// Inspect existing .ilean metadata without building first.
+    #[arg(long)]
+    pub no_build: bool,
+
+    /// Fail when a declaration depends on this axiom. May be repeated.
+    #[arg(long = "deny", value_name = "AXIOM")]
+    pub denied_axioms: Vec<String>,
+
+    /// Fail when the project contains an unsafe declaration.
+    #[arg(long)]
+    pub deny_unsafe: bool,
+
+    /// Print a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Less frequent project state and release operations.
+#[derive(Debug, Args)]
+pub struct ProjectArgs {
+    #[command(subcommand)]
+    pub command: ProjectCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProjectCommand {
+    /// Pin the project to a different Lean toolchain.
+    Pin(PinArgs),
+
+    /// Make a resolved Lean environment the project's default.
+    Use(UseArgs),
+
+    /// Remove project build outputs through Lake.
+    Clean(LakeArgs),
+
+    /// Export the locked dependency inventory or a CycloneDX SBOM.
+    Export(ExportArgs),
+
+    /// Audit local lock, toolchain, and dependency checkout integrity.
+    Audit(AuditArgs),
+
+    /// Create a deterministic archive of the locked project sources.
+    Bundle(BundleArgs),
+
+    /// Verify and upload Lake build artifacts to an existing GitHub release.
+    Publish(PublishArgs),
 }
 
 #[derive(Debug, Args)]

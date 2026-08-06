@@ -77,6 +77,8 @@ fn profile_graph_verify_and_timings_have_stable_reports() {
     let profile = json_data(&profile, "lev.cli.profile/v1");
     assert_eq!(profile["completed_repeats"], 3);
     assert_eq!(profile["samples_ms"].as_array().unwrap().len(), 3);
+    assert!(profile.get("mode").is_none());
+    assert!(profile.get("files").is_none());
     assert_eq!(
         fs::read_to_string(&fixture.log)
             .unwrap()
@@ -115,15 +117,36 @@ fn profile_graph_verify_and_timings_have_stable_reports() {
     assert_eq!(failed_profile["samples_ms"].as_array().unwrap().len(), 1);
     assert_eq!(failed_profile["exit_code"], 23);
 
+    let grouped_profile = fixture
+        .lev()
+        .args([
+            "inspect",
+            "performance",
+            "--no-sync",
+            "--offline",
+            "--json",
+            "--",
+            "sh",
+            "-c",
+            "exit 0",
+        ])
+        .output()
+        .unwrap();
+    assert_success_ref(&grouped_profile);
+    let grouped_profile = json_data(&grouped_profile, "lev.cli.inspect.performance/v1");
+    assert_eq!(grouped_profile["mode"], "command");
+    assert!(grouped_profile["files"].is_array());
+
     assert_success(fixture.lev().arg("lock").output().unwrap());
     let verified = fixture
         .lev()
-        .args(["verify", "--offline", "--json"])
+        .args(["verify", "--offline", "--test", "--lint", "--json"])
         .output()
         .unwrap();
     assert_success_ref(&verified);
     let verified = json_data(&verified, "lev.cli.verify/v1");
     assert_eq!(verified["status"], "passed");
+    assert!(verified.get("trust").is_none());
     assert_eq!(
         verified["phases"]
             .as_array()
@@ -131,7 +154,7 @@ fn profile_graph_verify_and_timings_have_stable_reports() {
             .iter()
             .map(|phase| phase["name"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["lock", "audit", "toolchain", "build"]
+        ["lock", "audit", "toolchain", "build", "test", "lint"]
     );
 
     let failed_verify = fixture
@@ -263,6 +286,171 @@ fn profile_json_inherits_stdin_and_reports_failed_warmups_without_fake_timings()
     let report = String::from_utf8_lossy(&failed_warmup.stdout);
     assert!(report.contains("no measured samples"), "{report}");
     assert!(!report.contains(" min "), "{report}");
+}
+
+#[test]
+fn file_profiles_validate_baselines_and_suppress_partial_comparisons() {
+    let fixture = Fixture::new();
+    write_empty_project(&fixture.project, "root");
+    fs::write(fixture.project.join("Root.lean"), "def root := 1\n").unwrap();
+    fs::create_dir(fixture.project.join("build")).unwrap();
+    fs::write(
+        fixture.project.join("build/Generated.lean"),
+        "def generated := 2\n",
+    )
+    .unwrap();
+
+    let baseline_path = fixture.root.join("performance-baseline.json");
+    let profiled = fixture
+        .lev()
+        .args([
+            "inspect",
+            "performance",
+            "--files",
+            "--no-sync",
+            "--offline",
+            "--json",
+            "--save-baseline",
+        ])
+        .arg(&baseline_path)
+        .output()
+        .unwrap();
+    assert_success_ref(&profiled);
+    let profiled = json_data(&profiled, "lev.cli.inspect.performance/v1");
+    assert_eq!(profiled["files"].as_array().unwrap().len(), 1);
+    assert_eq!(profiled["files"][0]["path"], "Root.lean");
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&baseline_path).unwrap()).unwrap();
+    assert_eq!(saved["version"], 1);
+    assert_eq!(saved["toolchain"], TEST_TOOLCHAIN);
+    assert!(saved["files"]["Root.lean"].as_f64().unwrap() > 0.0);
+    assert!(saved["files"].get("build/Generated.lean").is_none());
+
+    fs::write(
+        &baseline_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "toolchain": TEST_TOOLCHAIN_A,
+            "files": {"Root.lean": 1.0}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mismatched = fixture
+        .lev()
+        .args([
+            "inspect",
+            "performance",
+            "--files",
+            "--no-sync",
+            "--offline",
+            "--baseline",
+        ])
+        .arg(&baseline_path)
+        .output()
+        .unwrap();
+    assert!(!mismatched.status.success());
+    let stderr = String::from_utf8_lossy(&mismatched.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "was recorded with {TEST_TOOLCHAIN_A}, but this run uses {TEST_TOOLCHAIN}"
+        )),
+        "{stderr}"
+    );
+
+    let colliding_output = fixture
+        .lev()
+        .args(["inspect", "performance", "--files", "--baseline"])
+        .arg(&baseline_path)
+        .args(["--output"])
+        .arg(&baseline_path)
+        .output()
+        .unwrap();
+    assert!(!colliding_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&colliding_output.stderr)
+            .contains("report and baseline must use different paths")
+    );
+
+    let equivalent_output = fixture
+        .lev()
+        .args(["inspect", "performance", "--files", "--baseline"])
+        .arg(&baseline_path)
+        .args(["--output"])
+        .arg(
+            baseline_path
+                .parent()
+                .unwrap()
+                .join(".")
+                .join(baseline_path.file_name().unwrap()),
+        )
+        .output()
+        .unwrap();
+    assert!(!equivalent_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&equivalent_output.stderr)
+            .contains("report and baseline must use different paths")
+    );
+
+    fs::write(fixture.project.join("Second.lean"), "def second := 2\n").unwrap();
+    fs::write(
+        &baseline_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "toolchain": TEST_TOOLCHAIN,
+            "files": {
+                "Root.lean": 1.0,
+                "Second.lean": 1.0
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let threshold = fixture
+        .lev()
+        .args([
+            "inspect",
+            "performance",
+            "--files",
+            "--no-sync",
+            "--offline",
+            "--json",
+            "--baseline",
+        ])
+        .arg(&baseline_path)
+        .args(["--max-regression", "0"])
+        .output()
+        .unwrap();
+    assert_eq!(threshold.status.code(), Some(1));
+    let threshold = json_data(&threshold, "lev.cli.inspect.performance/v1");
+    assert_eq!(threshold["baseline"]["compared_files"], 2);
+    assert!(
+        threshold["baseline"]["regressions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|regression| regression["exceeds_limit"] == true)
+    );
+
+    let interrupted = fixture
+        .lev()
+        .args([
+            "inspect",
+            "performance",
+            "--files",
+            "--no-sync",
+            "--offline",
+            "--json",
+            "--baseline",
+        ])
+        .arg(&baseline_path)
+        .env("LEV_TEST_LAKE_LEAN_EXIT", "29")
+        .output()
+        .unwrap();
+    assert_eq!(interrupted.status.code(), Some(29));
+    let interrupted = json_data(&interrupted, "lev.cli.inspect.performance/v1");
+    assert_eq!(interrupted["files"].as_array().unwrap().len(), 1);
+    assert!(interrupted["baseline"].is_null());
 }
 
 #[test]

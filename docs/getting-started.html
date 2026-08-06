@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,65 +12,139 @@
     <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
-        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Imports &amp; graphs</a><a href="profiling.html" data-page-link="profiling">Profiling</a><a href="automation.html" data-page-link="automation">Automation</a></div>
-        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
       </nav></div></aside>
       <main id="main-content"><div class="article-shell"><article class="article">
-        <header class="page-header"><p class="eyebrow">Start</p><h1>Getting started</h1><p class="lead">Install lev, inspect the machine once, then use the Lake project already in front of you.</p></header>
+        <header class="page-header"><p class="eyebrow">Start</p><h1>Getting started</h1><p class="lead">Install lev, inspect an existing Lake project, verify its locked environment, and complete one build. The same commands work locally and in CI.</p></header>
 
-        <section id="install"><h2>Install</h2>
+        <section id="install"><h2>Install and smoke-test the binary</h2>
           <div class="command-block"><div class="command-label">Terminal</div><pre><code>cargo install --git https://github.com/Robertboy18/lev --locked lev-cli
 lev --version
-lev doctor</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Captured doctor report</div><pre><code>lev cache: /home/ec2-user/.cache/lev
-Git: git version 2.50.1
-elan: elan 4.2.3 (b6cec7e10 2026-06-08)
-project: /tmp/lev-doc-profile.GP0wJ1/project
-toolchain: leanprover/lean4:v4.18.0
-runtime: elan
-Lean: Lean (version 4.18.0, x86_64-unknown-linux-gnu,
-  commit 11ccbced7964, Release)
-Lake: Lake version 5.0.0-11ccbce (Lean version 4.18.0)
-Lake artifact cache:
-  /home/ec2-user/.cache/lev/lake-v1/47d4f1cac0535e8e
-lev config: not configured
-configured tasks: 0
-configured matrix toolchains: 0</code></pre></div>
-          <p class="example-caption">Captured on August 4, 2026 in the same local scratch project used for the profiling examples. Your paths and versions will differ. <code>doctor</code> diagnoses configuration; it does not modify the project.</p>
-          <aside class="note"><strong>What doctor checks.</strong> The report identifies the cache, Git, the optional elan fallback, the discovered project, its selected runtime, Lean and Lake, and any lev configuration. A failed probe names the layer to repair; doctor itself never modifies state.</aside>
-          <p>To uninstall, first preview the selected executable with <code>lev self uninstall --dry-run</code>. A Cargo-managed installation is handed back to Cargo; cache and toolchain data are retained unless you remove them separately.</p>
+lev --help</code></pre></div>
+          <p>If Rust is not installed, install it with <a href="https://rustup.rs/">rustup</a>. The Cargo package is <code>lev-cli</code>; the executable is <code>lev</code>.</p>
+          <div class="split-list">
+            <div><code>lev --version</code><p>Check that the shell is seeing the binary you just installed.</p></div>
+            <div><code>lev --help</code><p>Make sure the curated top-level surface is present: <code>doctor</code>, <code>shake</code>, <code>profile</code>, and <code>verify</code> should be visible.</p></div>
+            <div><code>lev doctor --help</code><p>Confirm that command-specific help is available before you use lev on a large checkout.</p></div>
+            <div><code>lev inspect</code><p>Outside a project, this still tells you what lev can establish from the current directory.</p></div>
+          </div>
+          <aside role="note" class="note"><strong>Project diagnosis and environment diagnosis are different reports.</strong> Bare <code>lev inspect</code> summarizes project files, lock state, and selected runtime. <code>lev doctor</code> checks the machine-facing side: Git, elan, Lean, Lake, cache paths, and workspace state. <code>lev inspect environment</code> is the grouped spelling of the same environment report.</aside>
+        </section>
+
+        <section id="confidence"><h2>Run the first project check</h2>
+          <div class="command-block"><div class="command-label">First session</div><pre><code>lev --version
+lev inspect
+lev doctor
+lev lock --check
+lev sync --frozen
+lev verify --offline --test</code></pre></div>
+          <div class="command-ladder">
+            <article class="ladder-step">
+              <div class="ladder-index">01</div>
+              <div class="ladder-body"><span class="ladder-command">lev inspect</span><h3>Read the project before you blame the build</h3><p>This report gives you the Lakefile, manifest, lock, optional <code>lev.toml</code>, selected toolchain, and any build metadata lev can already see on disk.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">02</div>
+              <div class="ladder-body"><span class="ladder-command">lev doctor</span><h3>Check the local runtime</h3><p>If this machine cannot resolve the selected Lean and Lake, everything after this point fails for the wrong reason.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">03</div>
+              <div class="ladder-body"><span class="ladder-command">lev lock --check</span><h3>Decide whether the environment changed on purpose</h3><p>This is where an edited <code>lean-toolchain</code>, Lakefile, or manifest should show itself. If the lock no longer matches, either regenerate it deliberately or restore the unintended edit.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">04</div>
+              <div class="ladder-body"><span class="ladder-command">lev sync --frozen</span><h3>Materialize the locked environment without moving it</h3><p>The frozen form proves the recorded setup still exists. It refuses the quiet "update while we are here" behavior that can hide drift during a first run.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">05</div>
+              <div class="ladder-body"><span class="ladder-command">lev verify --offline --test</span><h3>Finish with one meaningful gate</h3><p>After validating the environment, run the published verification pass and make sure the checkout works without network access.</p></div>
+            </article>
+          </div>
+          <div class="code-pair">
+            <div class="command-block output-block"><div class="command-label">Abridged project diagnosis</div><pre><code>Lev 1.0.0 diagnosis
+Project
+  toolchain: leanprover/lean4:v4.18.0
+  manifest: .../lake-manifest.json (0 packages)
+  runtime: elan
+
+Checks
+  PASS  project    found .../project
+  PASS  lakefile   parsed .../lakefile.toml
+  PASS  manifest   parsed .../lake-manifest.json
+  PASS  lock       .../lev.lock matches the project
+
+Summary: 4 passed, 0 warnings, 0 errors</code></pre></div>
+            <div class="command-block output-block"><div class="command-label">Abridged environment diagnosis</div><pre><code>Lev 1.0.0 environment
+Findings
+  PASS  system.git                    git is available
+  PASS  system.elan                   elan is available
+  PASS  environment.runtime.selected  leanprover/lean4:v4.18.0 will run through elan
+  PASS  environment.lean.version      Lean reports the selected version
+  PASS  environment.lake.version      Lake reports the matching version
+
+Summary: 5 passed, 0 warnings, 0 errors</code></pre></div>
+          </div>
+          <p class="example-caption">The paths and versions will differ. The project report covers files and lock state; the environment report covers the local runtime.</p>
         </section>
 
         <section id="completions"><h2>Shell completions</h2>
-          <p><code>lev completions</code> prints a completion definition for a supported shell on stdout. Install it where the shell already looks for completions, then open a new shell session.</p>
-          <div class="command-block"><div class="command-label">Terminal</div><pre><code># Bash
+          <p><code>lev completions</code> prints the completion definition to stdout. Install it wherever your shell already loads completions, then start a new shell session.</p>
+          <div class="command-block"><div class="command-label">Install completions</div><pre><code># Bash
 lev completions bash &gt; ~/.local/share/bash-completion/completions/lev
 
-# Zsh (any directory on $fpath)
+# Zsh
 lev completions zsh &gt; ~/.zfunc/_lev
 
 # Fish
 lev completions fish &gt; ~/.config/fish/completions/lev.fish</code></pre></div>
-          <p class="example-caption">The definition is generated by the installed binary, so re-run the command after upgrading lev.</p>
         </section>
 
-        <section id="existing"><h2>Use an existing project</h2>
-          <p>I wanted adoption to be boring in the best sense. A Lake project should not need a migration before lev can help. lev reads the ordinary <code>lean-toolchain</code>, Lakefile, and manifest, then adds <code>lev.lock</code> for the extra environment and integrity data it owns.</p>
-          <div class="steps">
-            <article><h3>Discover and synchronize</h3><p>Run from the root or a subdirectory. <code>sync</code> installs or selects the toolchain, materializes dependencies, and prepares compatible shared state.</p><div class="command-block"><div class="command-label">Terminal</div><pre><code>cd my-formalization
-lev sync</code></pre></div></article>
-            <article><h3>Build through Lake</h3><p>The short command performs the common preflight and delegates to <code>lake build</code>.</p><div class="command-block"><div class="command-label">Terminal</div><pre><code>lev build
-lev test
-lev lint</code></pre></div></article>
-            <article><h3>Lock the result</h3><p>Commit <code>lev.lock</code> alongside the existing Lake files so CI and another checkout can verify the same environment.</p><div class="command-block"><div class="command-label">Terminal</div><pre><code>lev lock
-git add lev.lock lean-toolchain lake-manifest.json
-git commit -m "Lock Lean environment"</code></pre></div></article>
+        <section id="existing"><h2>Adopt lev in an existing Lake project</h2>
+          <p>Adoption should be uneventful. lev reads the files a normal Lake project already has and adds one lock file of its own. You are not switching package formats or moving the project into a lev-only layout.</p>
+          <div class="contrast-grid">
+            <article class="contrast-card primary">
+              <h3>What stays exactly the same</h3>
+              <ul>
+                <li><code>lean-toolchain</code> still names the Lean toolchain.</li>
+                <li>Your Lakefile still defines packages, targets, and dependencies.</li>
+                <li><code>lake-manifest.json</code> is still Lake's resolved dependency graph.</li>
+              </ul>
+            </article>
+            <article class="contrast-card secondary">
+              <h3>What lev adds</h3>
+              <ul>
+                <li><code>lev.lock</code> records environment identity and integrity data around that project.</li>
+                <li>Short commands such as <code>lev build</code>, <code>lev doctor</code>, and <code>lev verify</code> attach the right environment automatically.</li>
+                <li><code>lev.toml</code> is optional and only matters when you want workspace members or named tasks.</li>
+              </ul>
+            </article>
           </div>
+          <div class="command-ladder">
+            <article class="ladder-step">
+              <div class="ladder-index">01</div>
+              <div class="ladder-body"><span class="ladder-command">lev sync</span><h3>Discover, install, and materialize</h3><p>Run lev from the project root or any subdirectory. It selects the nearest Lake project, resolves the toolchain, and prepares dependency state.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">02</div>
+              <div class="ladder-body"><span class="ladder-command">lev build</span><h3>Build through the same Lake project</h3><p>The common preflight happens first, then lev delegates to Lake. If Lake fails, you still read the Lean or Lake diagnostic first.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">03</div>
+              <div class="ladder-body"><span class="ladder-command">lev lock</span><h3>Commit the environment state you meant</h3><p>Review <code>lev.lock</code> the same way you review a manifest change. From that point on, another checkout and CI can prove they are using the same environment.</p></div>
+            </article>
+          </div>
+          <div class="command-block"><div class="command-label">Typical adoption pass</div><pre><code>cd my-formalization
+lev sync
+lev build
+lev lock
+git add lev.lock lean-toolchain lake-manifest.json
+git commit -m "Lock Lean environment"</code></pre></div>
         </section>
 
-        <section id="new"><h2>Create a project</h2>
+        <section id="new"><h2>Create a new project</h2>
           <div class="code-pair">
             <div class="command-block"><div class="command-label">Create</div><pre><code>lev init theorem-playground --lean stable
 cd theorem-playground
@@ -82,76 +156,53 @@ lev build</code></pre></div>
 ├── lean-toolchain
 └── lev.lock</code></pre></div>
           </div>
-          <p><code>init</code> creates a standard Lake package. The toolchain selector is resolved through the configured source rather than a release list compiled into lev.</p>
+          <p><code>lev init</code> creates a standard Lake package and pins the requested Lean selector in the ordinary <code>lean-toolchain</code> file. The project is still a normal Lean project; it just starts life with a lock.</p>
         </section>
 
-        <section id="daily"><h2>The daily loop</h2>
-          <div class="table-wrap"><table><thead><tr><th>Intent</th><th>Command</th><th>What happens</th></tr></thead><tbody>
-            <tr><th>Update local state</th><td><code>lev sync</code></td><td>Reproduce the locked toolchain and dependencies.</td></tr>
-            <tr><th>Build</th><td><code>lev build [TARGET]</code></td><td>Prepare the environment, then invoke Lake.</td></tr>
-            <tr><th>Run a process</th><td><code>lev run -- COMMAND</code></td><td>Execute any process with the selected Lean environment attached.</td></tr>
-            <tr><th>Check one file</th><td><code>lev check Path/File.lean</code></td><td>Elaborate the file through its Lake environment.</td></tr>
-            <tr><th>Work offline</th><td><code>lev build --offline</code></td><td>Refuse implicit toolchain or dependency network access.</td></tr>
-            <tr><th>Explain orchestration</th><td><code>lev -v build</code></td><td>Show cache and environment decisions in addition to Lake output.</td></tr>
+        <section id="first-failure"><h2>When the first run fails, sort it by layer</h2>
+          <p>Similar terminal failures can come from different layers. Use the first command that fails to classify the problem.</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">First failure</th><th scope="col">What it means</th><th scope="col">What to inspect</th></tr></thead><tbody>
+            <tr><th scope="row"><code>lev doctor</code></th><td>Git, elan, Lean, Lake, paths, or workspace state is unavailable or inconsistent.</td><td>Fix the local runtime before changing project sources or caches.</td></tr>
+            <tr><th scope="row"><code>lev lock --check</code> or <code>lev sync --frozen</code></th><td>A project input changed after <code>lev.lock</code> was written.</td><td>Decide whether the edit was intentional, then regenerate the lock or restore the project file.</td></tr>
+            <tr><th scope="row"><code>lev build</code> after Lake starts</th><td>The selected environment ran, but Lake or Lean rejected the project.</td><td>Read the compiler or Lake diagnostic above lev's summary line.</td></tr>
+            <tr><th scope="row">The cause is still unclear</th><td>The initial report does not contain enough evidence.</td><td>Run <code>lev inspect dependencies</code> and one verbose timed build before deleting <code>.lake</code>.</td></tr>
           </tbody></table></div>
-          <aside class="definition"><strong>No shell activation.</strong> Each lev command attaches the selected environment to the child process. Closing the shell does not lose or mutate an activated state.</aside>
-        </section>
-
-        <section id="first-failure"><h2>When the first run fails</h2>
-          <p>A failed first run is usually easier to fix once you know which layer refused it. lev errors describe environment selection and orchestration; Lake and Lean still print their own build diagnostics. Two failures that look similar in a terminal can call for very different repairs.</p>
           <div class="code-pair">
             <div class="command-block output-block"><div class="command-label">Lock drift</div><pre><code>$ lev sync --frozen
 error: effective Lake configuration for
 leanprover/lean4:v4.19.0 does not match lev.lock</code></pre></div>
-            <div class="command-block output-block"><div class="command-label">Captured delegated build failure</div><pre><code>$ lev build --no-sync --offline MissingTarget
+            <div class="command-block output-block"><div class="command-label">Delegated build failure</div><pre><code>$ lev build --no-sync --offline MissingTarget
 error: unknown target `MissingTarget`
-lev: Lake build failed under leanprover/lean4:v4.18.0 with exit code 1;
-retry trusted hash metadata with `lev build --no-sync --rehash TARGET`</code></pre></div>
+lev: Lake build failed under leanprover/lean4:v4.18.0 with exit code 1</code></pre></div>
           </div>
-          <p class="example-caption">Captured on August 4, 2026 from the dependency-free Lean 4.18.0 scratch project used throughout this manual.</p>
-          <p>Lock drift means a project input changed after <code>lev.lock</code> was written. If you deliberately edited the Lakefile, manifest, or toolchain, run <code>lev lock</code>, review the lock diff, and commit both changes together. If you did not mean to change the environment, restore the changed project file and keep the existing lock.</p>
-          <p>A delegated failure means lev reached Lake and Lake returned a nonzero status. Read the Lean or Lake diagnostic above lev's summary first. The focused <code>--rehash TARGET</code> retry is useful when trusted file-hash metadata is stale; it is not a general way to hide a theorem or compilation error.</p>
-          <div class="command-block"><div class="command-label">A useful diagnosis pass</div><pre><code>lev doctor
+          <div class="command-block"><div class="command-label">A focused follow-up</div><pre><code>lev inspect
+lev inspect dependencies
 lev lock --check
 lev -v --timings build</code></pre></div>
-          <p><code>-v</code> shows environment, dependency, and cache decisions. <code>--timings</code> shows whether time was spent preparing the environment, waiting for shared-state locks, or inside the delegated command. Keep the failing output from both streams when reporting a problem.</p>
-          <aside class="warning"><strong>Do not begin by deleting <code>.lake</code>.</strong> That throws away evidence and can turn a small lock or source error into a full rebuild. Check the lock, read the delegated diagnostic, and use the focused retry first. Clean only when the output points to stale generated state.</aside>
-        </section>
-
-        <section id="dependency"><h2>Add and update dependencies</h2>
-          <p>For declarative <code>lakefile.toml</code> projects, <code>add</code> and <code>remove</code> edit dependencies transactionally. Lake remains responsible for resolving the resulting manifest.</p>
-          <div class="command-block"><div class="command-label">Examples</div><pre><code>lev add mathlib
-lev add plausible --rev v0.2.0
-lev remove plausible
-lev update
-
-# Review compatible direct-dependency releases first
-lev outdated
-lev upgrade --dry-run
-lev upgrade mathlib</code></pre></div>
-          <aside class="warning"><strong>Preview upgrades before applying them.</strong> A dependency release can be compatible with the selected Lean version and still require source changes in your project. <code>--dry-run</code> makes the intended transaction reviewable.</aside>
+          <aside role="note" class="warning"><strong>Do not begin by deleting <code>.lake</code>.</strong> That throws away evidence and often turns a small lock or source problem into a full rebuild. Read the diagnostics first, then clean only if the output points to stale generated state.</aside>
         </section>
 
         <section id="files"><h2>What lev adds to the checkout</h2>
-          <p>lev works with the files a Lake project already commits and adds a small number of its own. Everything below is plain text and reviewable in version control.</p>
-          <div class="table-wrap"><table><thead><tr><th>File</th><th>Written by</th><th>Commit it?</th><th>Purpose</th></tr></thead><tbody>
-            <tr><th><code>lean-toolchain</code></th><td>Project</td><td>Yes</td><td>The toolchain selector Lake and elan already understand.</td></tr>
-            <tr><th><code>lakefile.toml</code> / <code>lakefile.lean</code></th><td>Project</td><td>Yes</td><td>Lake package configuration. <code>lev add</code> and <code>lev remove</code> edit the declarative TOML form.</td></tr>
-            <tr><th><code>lake-manifest.json</code></th><td>Lake</td><td>Yes</td><td>Resolved package dependencies. Never edit it by hand.</td></tr>
-            <tr><th><code>lev.lock</code></th><td>lev</td><td>Yes</td><td>Environment identity and integrity data for reproduction and audit.</td></tr>
-            <tr><th><code>lev.toml</code></th><td>You</td><td>When used</td><td>Optional <code>[workspace]</code> members and named <code>[tasks]</code>.</td></tr>
-            <tr><th><code>lev-workspace.lock</code></th><td>lev</td><td>In workspaces</td><td>Aggregate lock, published only after every member sync succeeds.</td></tr>
+          <div class="table-wrap"><table><thead><tr><th scope="col">File</th><th scope="col">Written by</th><th scope="col">Commit</th><th scope="col">Purpose</th></tr></thead><tbody>
+            <tr><th scope="row"><code>lean-toolchain</code></th><td>Project</td><td>Yes</td><td>The toolchain selector Lake and elan already understand.</td></tr>
+            <tr><th scope="row"><code>lakefile.toml</code> / <code>lakefile.lean</code></th><td>Project</td><td>Yes</td><td>Lake package configuration. Declarative TOML files can be edited transactionally by <code>lev deps add</code> and <code>lev deps remove</code>.</td></tr>
+            <tr><th scope="row"><code>lake-manifest.json</code></th><td>Lake</td><td>Yes</td><td>The resolved dependency graph. Treat it as generated state, but commit it.</td></tr>
+            <tr><th scope="row"><code>lev.lock</code></th><td>lev</td><td>Yes</td><td>Environment identity and integrity data for reproduction and review.</td></tr>
+            <tr><th scope="row"><code>lev.toml</code></th><td>You</td><td>When used</td><td>Optional workspace members, named tasks, and project automation policy.</td></tr>
+            <tr><th scope="row"><code>lev-workspace.lock</code></th><td>lev</td><td>In workspaces</td><td>An aggregate snapshot over configured workspace members.</td></tr>
           </tbody></table></div>
-          <p>None of these replaces a Lake file. Deleting <code>lev.lock</code> returns the project to plain elan-and-Lake behavior; regenerating it with <code>lev lock</code> restores the reproducibility guarantees.</p>
+          <p>None of these replaces a Lake file. If you remove <code>lev.lock</code>, the project falls back to ordinary elan-and-Lake behavior. Recreate it with <code>lev lock</code> when you want the reproducibility layer back.</p>
         </section>
 
-        <section id="next"><h2>Where to go next</h2>
-          <p>Read <a href="environments.html">Environments &amp; cache</a> when you need several Lean versions, CI cache reuse, or locked alternate environments. Read <a href="imports.html">Imports &amp; graphs</a> when <code>import Mathlib</code> is the problem you actually came to solve.</p>
+        <section id="next"><h2>Related guides</h2>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Guide</th><th scope="col">Covers</th></tr></thead><tbody>
+            <tr><th scope="row"><a href="environments.html">Environments and cache</a></th><td>Multiple Lean versions, lock modes, offline work, shared caches, and local workspaces.</td></tr>
+            <tr><th scope="row"><a href="imports.html">Import minimization</a></th><td>Broad imports, compiler-derived replacements, repository policy, and project-wide checks.</td></tr>
+          </tbody></table></div>
         </section>
 
         <nav class="page-nav" aria-label="Previous and next pages"><a href="index.html"><small>Previous</small><strong>Overview</strong></a><a href="environments.html"><small>Next</small><strong>Environments &amp; cache</strong></a></nav>
-        <footer class="site-footer"><p>Run <code>lev -h</code> for the everyday surface and <code>lev --help</code> for every command.</p></footer>
-      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#install">Install</a><a href="#completions">Completions</a><a href="#existing">Existing project</a><a href="#new">New project</a><a href="#daily">Daily loop</a><a href="#first-failure">First failure</a><a href="#dependency">Dependencies</a><a href="#files">Project files</a><a href="#next">Next steps</a></nav></div></main>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#install">Install</a><a href="#confidence">First session</a><a href="#completions">Completions</a><a href="#existing">Existing project</a><a href="#new">New project</a><a href="#first-failure">First failure</a><a href="#files">Project files</a><a href="#next">Related guides</a></nav></div></main>
     </div>
   </body>
 </html>

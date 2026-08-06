@@ -33,15 +33,52 @@
       ?.setAttribute("aria-current", "page");
   }
 
+  function inferCodeLanguage(code) {
+    const block = code.closest(".command-block");
+    const label = block?.querySelector(".command-label")?.textContent?.toLowerCase() ?? "";
+    const text = code.textContent.trim();
+    if (block?.classList.contains("lean-block")) {
+      return "language-lean";
+    }
+    if (label.includes(".toml")) {
+      return "language-toml";
+    }
+    if (label.includes("yaml") || label.includes("github actions")) {
+      return "language-yaml";
+    }
+    if (label.includes(".json") || label.includes("json report") || /^[\[{]/.test(text)) {
+      return "language-json";
+    }
+    if (block?.classList.contains("output-block")) {
+      return "language-plaintext";
+    }
+    return "language-bash";
+  }
+
   document.querySelectorAll(".command-block code").forEach((code) => {
     const hasLanguage = [...code.classList].some((name) =>
       name.startsWith("language-"),
     );
     if (!hasLanguage) {
-      const output = code.closest(".command-block")?.classList.contains("output-block");
-      code.classList.add(output ? "language-plaintext" : "language-bash");
+      code.classList.add(inferCodeLanguage(code));
     }
     window.hljs?.highlightElement(code);
+  });
+
+  document.querySelectorAll(".table-wrap table").forEach((table) => {
+    const headers = [...table.querySelectorAll("thead tr:first-child > th, thead tr:first-child > td")]
+      .map((cell) => cell.textContent.replace(/\s+/g, " ").trim());
+    table.querySelectorAll("tbody tr").forEach((row) => {
+      [...row.children].forEach((cell, index) => {
+        if (!(cell instanceof HTMLElement) || cell.matches('th[scope="row"]')) {
+          return;
+        }
+        const label = headers[index];
+        if (label) {
+          cell.setAttribute("data-label", label);
+        }
+      });
+    });
   });
 
   async function copyText(text, source) {

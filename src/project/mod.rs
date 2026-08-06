@@ -3,14 +3,19 @@
 //! The nearest `lean-toolchain` file defines the project root.
 
 pub(crate) mod audit;
+pub(crate) mod build_causality;
+pub(crate) mod build_diagnostics;
+pub(crate) mod build_trace;
 pub(crate) mod bundle;
 pub(crate) mod config;
+pub(crate) mod declaration_index;
 pub(crate) mod export;
 pub(crate) mod import_graph;
 pub(crate) mod lakefile;
 pub(crate) mod local_workspace;
 pub(crate) mod lockfile;
 pub(crate) mod manifest;
+pub(crate) mod trust_inspector;
 pub(crate) mod workspace;
 
 use std::fs;

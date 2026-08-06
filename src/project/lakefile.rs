@@ -92,13 +92,6 @@ pub fn remove(path: &Path, name: &str) -> Result<()> {
     write(path, &document)
 }
 
-pub fn set_revision(path: &Path, name: &str, revision: &str) -> Result<()> {
-    set_revisions(
-        path,
-        &BTreeMap::from([(name.to_owned(), revision.to_owned())]),
-    )
-}
-
 /// Replace several direct dependency revisions in one parsed transaction.
 ///
 /// Environment activation can change several direct packages together.
@@ -217,13 +210,12 @@ fn write(path: &Path, document: &DocumentMut) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
 
     use tempfile::tempdir;
 
-    use super::{
-        Dependency, DependencySource, add, dependency_names, remove, set_revision, set_revisions,
-    };
+    use super::{Dependency, DependencySource, add, dependency_names, remove, set_revisions};
 
     #[test]
     fn adds_replaces_and_removes_a_dependency_without_losing_comments() {
@@ -257,7 +249,11 @@ mod tests {
         assert!(replaced.contains("git = \"https://example.invalid/example.git\""));
         assert!(!replaced.contains("scope ="));
 
-        set_revision(&path, "example", "v1.3.0").unwrap();
+        set_revisions(
+            &path,
+            &BTreeMap::from([("example".to_owned(), "v1.3.0".to_owned())]),
+        )
+        .unwrap();
         let upgraded = fs::read_to_string(&path).unwrap();
         assert!(upgraded.contains("rev = \"v1.3.0\""));
         assert!(upgraded.contains("# keep this"));

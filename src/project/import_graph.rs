@@ -1,6 +1,6 @@
 //! Deterministic source-level Lean module import graphs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Component, Path};
 
@@ -34,6 +34,27 @@ pub struct ImportGraph {
     pub nodes: Vec<ImportNode>,
     pub edges: Vec<ImportEdge>,
     pub cycles: Vec<Vec<String>>,
+}
+
+/// One deterministic shortest path through project-owned reverse imports.
+///
+/// A path says that changing `source` could affect `affected` according to
+/// Lean source imports. It is not evidence that Lake actually rebuilt the
+/// module or that this path mirrors Lake's internal job graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReverseImportPath {
+    pub source: String,
+    pub affected: String,
+    pub path: Vec<String>,
+}
+
+/// Potential project-level impact inferred only from source imports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PotentialBlastRadius {
+    pub sources: Vec<String>,
+    pub affected_modules: Vec<String>,
+    pub paths: Vec<ReverseImportPath>,
+    pub unknown_sources: Vec<String>,
 }
 
 impl ImportGraph {
@@ -93,6 +114,103 @@ impl ImportGraph {
             edges: edges.into_iter().collect(),
         })
     }
+
+    /// Find deterministic shortest paths from changed modules to their
+    /// project-owned reverse importers.
+    ///
+    /// External edges are ignored. The result is a source-level potential
+    /// blast radius, not a reconstruction of Lake's complete job DAG.
+    pub fn potential_blast_radius(&self, changed_modules: &[String]) -> PotentialBlastRadius {
+        let modules = self
+            .nodes
+            .iter()
+            .map(|node| node.module.clone())
+            .collect::<BTreeSet<_>>();
+        let mut reverse = modules
+            .iter()
+            .map(|module| (module.clone(), BTreeSet::new()))
+            .collect::<BTreeMap<_, _>>();
+        for edge in &self.edges {
+            if !edge.external && modules.contains(&edge.from) && modules.contains(&edge.to) {
+                reverse
+                    .entry(edge.to.clone())
+                    .or_default()
+                    .insert(edge.from.clone());
+            }
+        }
+
+        let requested = changed_modules.iter().cloned().collect::<BTreeSet<_>>();
+        let sources = requested
+            .iter()
+            .filter(|source| modules.contains(*source))
+            .cloned()
+            .collect::<Vec<_>>();
+        let unknown_sources = requested
+            .iter()
+            .filter(|source| !modules.contains(*source))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut affected_modules = BTreeSet::new();
+        let mut paths = Vec::new();
+
+        for source in &sources {
+            let parents = reverse_import_parents(source, &reverse);
+            for affected in parents.keys() {
+                let path = path_from_parents(source, affected, &parents);
+                affected_modules.insert(affected.clone());
+                paths.push(ReverseImportPath {
+                    source: source.clone(),
+                    affected: affected.clone(),
+                    path,
+                });
+            }
+        }
+
+        PotentialBlastRadius {
+            sources,
+            affected_modules: affected_modules.into_iter().collect(),
+            paths,
+            unknown_sources,
+        }
+    }
+}
+
+fn reverse_import_parents(
+    source: &str,
+    reverse: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, Option<String>> {
+    let mut parents = BTreeMap::from([(source.to_owned(), None)]);
+    let mut pending = VecDeque::from([source.to_owned()]);
+
+    while let Some(module) = pending.pop_front() {
+        if let Some(importers) = reverse.get(&module) {
+            for importer in importers {
+                if !parents.contains_key(importer) {
+                    parents.insert(importer.clone(), Some(module.clone()));
+                    pending.push_back(importer.clone());
+                }
+            }
+        }
+    }
+    parents
+}
+
+fn path_from_parents(
+    source: &str,
+    affected: &str,
+    parents: &BTreeMap<String, Option<String>>,
+) -> Vec<String> {
+    let mut path = vec![affected.to_owned()];
+    let mut current = affected;
+    while current != source {
+        let Some(Some(parent)) = parents.get(current) else {
+            break;
+        };
+        path.push(parent.clone());
+        current = parent;
+    }
+    path.reverse();
+    path
 }
 
 #[derive(Debug)]
@@ -294,6 +412,16 @@ fn parse_module_name(value: &str) -> Option<(String, &str)> {
         rest = after_dot;
     }
     Some((components.join("."), rest))
+}
+
+/// Validate and normalize a source-level qualified Lean name.
+pub(crate) fn canonical_lean_name(value: &str) -> Result<String> {
+    let (name, remaining) = parse_module_name(value)
+        .with_context(|| format!("{value:?} is not a valid qualified Lean name"))?;
+    if !remaining.is_empty() {
+        bail!("{value:?} is not a valid qualified Lean name");
+    }
+    Ok(name)
 }
 
 fn parse_module_component(value: &str) -> Option<(&str, &str)> {
@@ -695,5 +823,89 @@ import After.Body
         let graph = ImportGraph::inspect(&project, &["«foo-bar»".to_owned()], false).unwrap();
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.nodes[0].path, "foo-bar.lean");
+    }
+
+    #[test]
+    fn finds_deterministic_shortest_reverse_import_paths_through_a_diamond() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join("lean-toolchain"), "test\n").unwrap();
+        fs::write(temp.path().join("A.lean"), "def a := 1\n").unwrap();
+        fs::write(temp.path().join("B.lean"), "import A\ndef b := a\n").unwrap();
+        fs::write(temp.path().join("C.lean"), "import A\ndef c := a\n").unwrap();
+        fs::write(
+            temp.path().join("D.lean"),
+            "import B\nimport C\ndef d := b + c\n",
+        )
+        .unwrap();
+        fs::write(temp.path().join("E.lean"), "import D\ndef e := d\n").unwrap();
+        let project = Project::load(temp.path().to_owned()).unwrap();
+        let graph = ImportGraph::inspect(&project, &[], true).unwrap();
+
+        let blast = graph.potential_blast_radius(&["A".to_owned()]);
+        assert_eq!(blast.sources, ["A"]);
+        assert_eq!(blast.unknown_sources, Vec::<String>::new());
+        assert_eq!(blast.affected_modules, ["A", "B", "C", "D", "E"]);
+        let d = blast
+            .paths
+            .iter()
+            .find(|path| path.affected == "D")
+            .unwrap();
+        assert_eq!(d.path, ["A", "B", "D"]);
+        let e = blast
+            .paths
+            .iter()
+            .find(|path| path.affected == "E")
+            .unwrap();
+        assert_eq!(e.path, ["A", "B", "D", "E"]);
+    }
+
+    #[test]
+    fn reverse_import_paths_terminate_on_cycles_and_report_unknown_sources() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join("lean-toolchain"), "test\n").unwrap();
+        fs::write(temp.path().join("X.lean"), "import Y\ndef x := y\n").unwrap();
+        fs::write(temp.path().join("Y.lean"), "import X\ndef y := x\n").unwrap();
+        fs::write(temp.path().join("Z.lean"), "import X\ndef z := x\n").unwrap();
+        let project = Project::load(temp.path().to_owned()).unwrap();
+        let graph = ImportGraph::inspect(&project, &[], false).unwrap();
+
+        let blast =
+            graph.potential_blast_radius(&["Missing".to_owned(), "X".to_owned(), "X".to_owned()]);
+        assert_eq!(blast.sources, ["X"]);
+        assert_eq!(blast.unknown_sources, ["Missing"]);
+        assert_eq!(blast.affected_modules, ["X", "Y", "Z"]);
+        assert_eq!(blast.paths.len(), 3);
+        assert_eq!(
+            blast
+                .paths
+                .iter()
+                .find(|path| path.affected == "Y")
+                .unwrap()
+                .path,
+            ["X", "Y"]
+        );
+        assert_eq!(
+            blast
+                .paths
+                .iter()
+                .find(|path| path.affected == "Z")
+                .unwrap()
+                .path,
+            ["X", "Z"]
+        );
+    }
+
+    #[test]
+    fn reverse_import_analysis_never_crosses_external_edges() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join("lean-toolchain"), "test\n").unwrap();
+        fs::write(temp.path().join("Main.lean"), "import External\n").unwrap();
+        let project = Project::load(temp.path().to_owned()).unwrap();
+        let graph = ImportGraph::inspect(&project, &[], true).unwrap();
+
+        let blast = graph.potential_blast_radius(&["External".to_owned()]);
+        assert!(blast.sources.is_empty());
+        assert!(blast.affected_modules.is_empty());
+        assert_eq!(blast.unknown_sources, ["External"]);
     }
 }

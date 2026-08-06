@@ -8,11 +8,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use clap::CommandFactory;
+use clap::{CommandFactory, error::ErrorKind};
 use clap_complete::generate;
 
 use crate::cache::{CacheLayout, human_bytes};
-use crate::cli::{Cli, Command as CliCommand};
+use crate::cli::{
+    Cli, Command as CliCommand, DepsArgs, DepsCommand, DepsListArgs, InspectArgs, InspectCommand,
+    ProjectArgs, ProjectCommand,
+};
 use crate::project::local_workspace as workspace;
 use crate::project::{Project, absolute};
 use crate::toolchain::store::ToolchainStore;
@@ -23,6 +26,7 @@ mod dependency_commands;
 mod environment_commands;
 mod execution_commands;
 mod graph_commands;
+mod inspect_commands;
 mod isolated_environment;
 mod matrix_commands;
 mod native_resolver;
@@ -84,6 +88,9 @@ pub fn execute(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         CliCommand::Lock(args) => project_commands::lock(&context, args),
+        CliCommand::Deps(args) => dependency_command(&context, args),
+        CliCommand::Inspect(args) => inspect_command(&context, args),
+        CliCommand::ProjectState(args) => project_command(&context, args),
         CliCommand::Add(args) => dependency_commands::add(&context, args),
         CliCommand::Remove(args) => dependency_commands::remove(&context, args),
         CliCommand::Update(args) => dependency_commands::update(&context, args),
@@ -99,14 +106,15 @@ pub fn execute(cli: Cli) -> Result<i32> {
         CliCommand::Test(args) => execution_commands::workflow(&context, "test", args),
         CliCommand::Lint(args) => execution_commands::workflow(&context, "lint", args),
         CliCommand::Clean(args) => execution_commands::lake_command(&context, "clean", args),
-        CliCommand::Check(args) => execution_commands::check(&context, args),
-        CliCommand::Shake(args) => shake_commands::shake(&context, args),
-        CliCommand::Profile(args) => profile_commands::profile(&context, args),
+        CliCommand::Check(args) => check_command(&context, args),
+        CliCommand::Imports(args) | CliCommand::Shake(args) => {
+            shake_commands::shake(&context, args)
+        }
+        CliCommand::Profile(args) => profile_commands::profile_legacy(&context, args),
         CliCommand::Graph(args) => graph_commands::graph(&context, args),
         CliCommand::Verify(args) => verify_commands::verify(&context, args),
         CliCommand::Bundle(args) => bundle_commands::bundle(&context, args),
         CliCommand::Watch(args) => watch_commands::watch(&context, args),
-        CliCommand::Deps(args) => project_commands::dependencies(&context, args),
         CliCommand::Tree(args) => project_commands::dependency_tree(&context, args),
         CliCommand::Why(args) => project_commands::why_dependency(&context, args),
         CliCommand::Matrix(args) => matrix_commands::matrix(&context, args),
@@ -121,7 +129,9 @@ pub fn execute(cli: Cli) -> Result<i32> {
         CliCommand::Tool(args) => tool_commands::tool_command(&context, args.command),
         CliCommand::Script(args) => script_commands::script_command(&context, args.command),
         CliCommand::SelfManagement(args) => self_commands::self_command(&context, args.command),
-        CliCommand::Doctor => project_commands::doctor(&context),
+        CliCommand::Doctor(args) => {
+            inspect_commands::environment(&context, args.json, args.output.as_deref())
+        }
         CliCommand::Completions { shell } => {
             generate(shell, &mut Cli::command(), "lev", &mut io::stdout());
             Ok(0)
@@ -134,6 +144,148 @@ pub fn execute(cli: Cli) -> Result<i32> {
         );
     }
     result
+}
+
+fn dependency_command(context: &AppContext, args: DepsArgs) -> Result<i32> {
+    if args.json
+        && !matches!(
+            &args.command,
+            None | Some(DepsCommand::List(DepsListArgs { .. }))
+        )
+    {
+        return command_usage_error(
+            "deps",
+            "`--json` before a subcommand is only valid for `deps list`; subcommands that support \
+             JSON accept it after their name",
+        );
+    }
+    match args.command {
+        None => project_commands::dependencies(context, DepsListArgs { json: args.json }),
+        Some(DepsCommand::List(mut list)) => {
+            list.json |= args.json;
+            project_commands::dependencies(context, list)
+        }
+        Some(DepsCommand::Add(args)) => dependency_commands::add(context, args),
+        Some(DepsCommand::Remove(args)) => dependency_commands::remove(context, args),
+        Some(DepsCommand::Update(args)) => dependency_commands::update(context, args),
+        Some(DepsCommand::Outdated(args)) => dependency_commands::outdated(context, args),
+        Some(DepsCommand::Upgrade(args)) => dependency_commands::upgrade(context, args),
+        Some(DepsCommand::Tree(args)) => project_commands::dependency_tree(context, args),
+        Some(DepsCommand::Why(args)) => project_commands::why_dependency(context, args),
+    }
+}
+
+fn inspect_command(context: &AppContext, args: InspectArgs) -> Result<i32> {
+    let Some(command) = args.command else {
+        return inspect_commands::project(context, args.json, args.output.as_deref());
+    };
+    if args.json || args.output.is_some() {
+        return command_usage_error(
+            "inspect",
+            "`lev inspect --json/--output SUBCOMMAND` is ambiguous; put a supported report option \
+             after the subcommand, for example `lev inspect build --json`",
+        );
+    }
+    match command {
+        InspectCommand::Dependencies(args) => inspect_commands::dependencies(context, args),
+        InspectCommand::Environment(args) => {
+            inspect_commands::environment(context, args.json, args.output.as_deref())
+        }
+        InspectCommand::Build(args) => inspect_commands::build(context, args),
+        InspectCommand::Performance(args) => profile_commands::profile(context, args),
+        InspectCommand::Imports(args) => shake_commands::shake(context, args),
+        InspectCommand::Graph(args) => graph_commands::graph(context, args),
+        InspectCommand::Declaration(args) => inspect_commands::declaration(context, args),
+        InspectCommand::Trust(args) => inspect_commands::trust(context, args),
+    }
+}
+
+fn check_command(context: &AppContext, mut args: crate::cli::CheckArgs) -> Result<i32> {
+    if args.file.is_none() && legacy_check_file(context, &args)? {
+        args.file = Some(PathBuf::from(args.args.remove(0)));
+    }
+    if args.file.is_some() {
+        if args.clean
+            || !args.tasks.is_empty()
+            || args.imports
+            || args.strict
+            || !args.denied_axioms.is_empty()
+            || args.deny_unsafe
+            || args.json
+        {
+            return command_usage_error(
+                "check",
+                "Lean file mode cannot be used with project-check options such as `--json`; remove \
+                 those options, or use `lev check --file PATH` to make text-only file mode explicit",
+            );
+        }
+        return execution_commands::check_file(context, args);
+    }
+    if args.lean.is_some() || args.no_sync {
+        return command_usage_error(
+            "check",
+            "`--lean` and `--no-sync` require `--file PATH` or a positional Lean source file",
+        );
+    }
+    verify_commands::check(context, args)
+}
+
+fn command_usage_error(command_name: &str, message: &str) -> Result<i32> {
+    let root = Cli::command();
+    let mut command = root
+        .find_subcommand(command_name)
+        .expect("top-level command exists")
+        .clone()
+        .bin_name(format!("lev {command_name}"));
+    let error = command.error(ErrorKind::ArgumentConflict, message);
+    let code = error.exit_code();
+    error.print()?;
+    Ok(code)
+}
+
+fn legacy_check_file(context: &AppContext, args: &crate::cli::CheckArgs) -> Result<bool> {
+    if args.args.is_empty() {
+        return Ok(false);
+    }
+
+    let candidate = PathBuf::from(&args.args[0]);
+    if candidate
+        .extension()
+        .and_then(|extension| extension.to_str())
+        == Some("lean")
+    {
+        return Ok(true);
+    }
+    if args.clean
+        || !args.tasks.is_empty()
+        || args.imports
+        || args.strict
+        || !args.denied_axioms.is_empty()
+        || args.deny_unsafe
+        || args.json
+    {
+        return Ok(false);
+    }
+    let Ok(project) = context.project() else {
+        return Ok(false);
+    };
+    Ok(if candidate.is_absolute() {
+        candidate.is_file()
+    } else {
+        project.root.join(candidate).is_file()
+    })
+}
+
+fn project_command(context: &AppContext, args: ProjectArgs) -> Result<i32> {
+    match args.command {
+        ProjectCommand::Pin(args) => dependency_commands::pin(context, args),
+        ProjectCommand::Use(args) => project_commands::use_environment(context, args),
+        ProjectCommand::Clean(args) => execution_commands::lake_command(context, "clean", args),
+        ProjectCommand::Export(args) => project_commands::export_project(context, args),
+        ProjectCommand::Audit(args) => project_commands::audit_project(context, args),
+        ProjectCommand::Bundle(args) => bundle_commands::bundle(context, args),
+        ProjectCommand::Publish(args) => project_commands::publish(context, args),
+    }
 }
 
 impl AppContext {

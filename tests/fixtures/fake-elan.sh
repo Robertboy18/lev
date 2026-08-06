@@ -102,11 +102,19 @@ if [ "${1:-}" = "run" ]; then
   if [ "${1:-}" = "lake" ] && [ "${2:-}" = "env" ] &&
      [ "${3:-}" = "lean" ]; then
     printf 'lake-script\t%s\n' "$PWD" >> "$LEV_TEST_LOG"
+    if [ -n "${LEV_TEST_LEAN_JSON_FILE:-}" ]; then
+      cat "$LEV_TEST_LEAN_JSON_FILE"
+    fi
     if [ -n "${LEV_TEST_SCRIPT_ARGS_FILE:-}" ]; then
       shift 3
       printf '%s\n' "$@" > "$LEV_TEST_SCRIPT_ARGS_FILE"
     fi
     exit 0
+  fi
+
+  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "lean" ]; then
+    printf 'lake-lean\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
+    exit "${LEV_TEST_LAKE_LEAN_EXIT:-0}"
   fi
 
   if [ "${1:-}" = "lake" ] && [ "${2:-}" = "update" ]; then
@@ -170,6 +178,42 @@ if [ "${1:-}" = "run" ]; then
       touch "$LEV_TEST_SHAKE_BUILD_MARKER"
     fi
     exit 0
+  fi
+
+  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "--verbose" ] &&
+     [ "${3:-}" = "build" ]; then
+    printf 'lake-build\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
+    target=${LEV_TEST_LAKE_VERBOSE_TARGET:-Root}
+    printf '✔ [1/5] Built %s (12ms)\n' "$target"
+    printf 'ℹ [2/5] Replayed dependency:leanArts\n' >&2
+    printf '✔ [3/5] Ran job computation\n'
+    printf '✔ [4/5] Ran %s:extraDep\n' "$target"
+    printf '✔ [5/5] Ran root\n'
+    if [ -n "${LEV_TEST_LAKE_TRACE_AFTER:-}" ]; then
+      mkdir -p .lake/build/lib/lean
+      cp "$LEV_TEST_LAKE_TRACE_AFTER" ".lake/build/lib/lean/$target.trace"
+    fi
+    if [ "${LEV_TEST_LAKE_VERBOSE_FAIL:-}" = "1" ]; then
+      printf '✖ [6/6] Building %s (15ms)\n' "$target" >&2
+      if [ -n "${LEV_TEST_LAKE_VERBOSE_ERROR:-}" ]; then
+        printf '%s\n' "$LEV_TEST_LAKE_VERBOSE_ERROR" >&2
+      fi
+      printf 'Some required targets logged failures:\n' >&2
+      printf -- '- %s\n' "$target" >&2
+      printf 'error: build failed\n' >&2
+      exit "${LEV_TEST_LAKE_BUILD_EXIT:-37}"
+    fi
+    exit 0
+  fi
+
+  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "test" ]; then
+    printf 'lake-test\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
+    exit "${LEV_TEST_LAKE_TEST_EXIT:-0}"
+  fi
+
+  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "lint" ]; then
+    printf 'lake-lint\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
+    exit "${LEV_TEST_LAKE_LINT_EXIT:-0}"
   fi
 
   if [ "${1:-}" = "lake" ] && [ "${2:-}" = "shake" ]; then

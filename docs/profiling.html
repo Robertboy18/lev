@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,284 +12,94 @@
     <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
-        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Imports &amp; graphs</a><a href="profiling.html" data-page-link="profiling">Profiling</a><a href="automation.html" data-page-link="automation">Automation</a></div>
-        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
       </nav></div></aside>
       <main id="main-content"><div class="article-shell"><article class="article">
-        <header class="page-header"><p class="eyebrow">Performance guide</p><h1>Profiling Lean work</h1><p class="lead">A slow build can mean environment setup, lock contention, Lake scheduling, one expensive file, or one expensive elaboration step. Measure at the layer where the question lives.</p></header>
+        <header class="page-header"><p class="eyebrow">Performance guide</p><h1>Profiling Lean work</h1><p class="lead">A useful profile has a defined scope: one complete command, a repeated benchmark, a ranking of project files, or a trace inside Lean. Measure in that order until the source of the slowdown is clear.</p>
+          <nav class="chapter-links" aria-label="Profiling guide chapters"><p>Profiling</p><a href="profiling.html" aria-current="page">Overview</a><a href="profiling-measurement.html">Timing &amp; samples</a><a href="profiling-lean.html">Slow files &amp; Lean profiler</a></nav>
+        </header>
 
-        <section id="layers"><h2>Three profiling layers</h2>
-          <p>A build feels slow, so the first instinct is to time it. That gives one number, but it does not tell you whether lev prepared an environment, a process waited on a lock, Lake rebuilt a module, or Lean spent the time inside one tactic. The word “profile” covers three different jobs here.</p>
-          <div class="profile-stack" role="list" aria-label="Three profiling layers">
-            <div class="profile-layer" role="listitem"><strong><code>lev --timings</code></strong><span>One end-to-end command, split into lev environment, preparation, lock, delegated command, and total phases.</span></div>
-            <div class="profile-layer" role="listitem"><strong><code>lev profile</code></strong><span>Repeated wall-clock duration of a complete child command, with warmups and summary statistics.</span></div>
-            <div class="profile-layer" role="listitem"><strong>Lean profiler</strong><span>Nested elaborator, metaprogram, kernel, and compiler trace scopes inside one Lean process.</span></div>
-          </div>
-          <div class="table-wrap"><table><thead><tr><th>Your question</th><th>Start with</th><th>Reason</th></tr></thead><tbody>
-            <tr><th>Why did this one build feel slow?</th><td><code>lev --timings build</code></td><td>Separates orchestration from the delegated command.</td></tr>
-            <tr><th>Did a change improve build latency?</th><td><code>lev profile</code></td><td>Collects comparable repeated process samples.</td></tr>
-            <tr><th>Which file is slow?</th><td>Lake build output, then targeted file builds</td><td>Locate the module before tracing internals.</td></tr>
-            <tr><th>Which tactic or elaboration subsystem is slow?</th><td><code>trace.profiler</code></td><td>Shows nested work inside Lean.</td></tr>
-            <tr><th>Is work deterministic across machines?</th><td>Lean heartbeat mode plus wall time</td><td>Heartbeats approximate deterministic work; wall time reflects the actual machine.</td></tr>
-          </tbody></table></div>
-        </section>
-
-        <section id="timings"><h2>Locate the slow layer with <code>--timings</code></h2>
-          <p>Start wide. One instrumented run is enough to decide whether the next investigation belongs in lev's setup, shared-state contention, or the command lev launched.</p>
-          <div class="command-block"><div class="command-label">One instrumented build</div><pre><code>lev --timings build --no-sync --offline</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Captured timing output</div><pre><code>lev timing: environment 0.001 ms
-lev timing: prepare 140.983 ms
-lev timing: locks 0.343 ms
-Build completed successfully.
-lev timing: command 299.666 ms
-lev timing: total 441.176 ms</code></pre></div>
-          <p class="example-caption">Captured on August 4, 2026 from a dependency-free Lean 4.18.0 project copied to local scratch. Timing lines go to stderr, leaving stdout free for piping or machine-readable output.</p>
-          <p>The phases come directly from lev's execution path:</p>
-          <div class="table-wrap"><table><thead><tr><th>Phase</th><th>Begins</th><th>Includes</th></tr></thead><tbody>
-            <tr><th><code>environment</code></th><td>Before environment selection</td><td>Resolving the default, local, or explicit <code>--lean</code> environment.</td></tr>
-            <tr><th><code>prepare</code></th><td>Before common preflight</td><td>Toolchain availability and, unless <code>--no-sync</code>, synchronization.</td></tr>
-            <tr><th><code>locks</code></th><td>Before shared-state locks</td><td>Dependency and artifact-cache locks plus registry bookkeeping.</td></tr>
-            <tr><th><code>command</code></th><td>Immediately before child execution</td><td>Process startup and the full delegated command, commonly <code>lake build</code>.</td></tr>
-            <tr><th><code>total</code></th><td>At lev process entry</td><td>All phases plus CLI and uninstrumented overhead.</td></tr>
-          </tbody></table></div>
-          <figure class="plot"><figcaption>Captured phase timeline<span class="caption-detail">The delegated command took about two thirds of this 441 ms run; preparation took most of the rest.</span></figcaption>
-            <svg viewBox="0 0 760 220" role="img" aria-labelledby="phase-title phase-desc">
-              <title id="phase-title">lev timing phase timeline</title><desc id="phase-desc">Environment selection takes 0.001 milliseconds, preparation 140.983 milliseconds, locks 0.343 milliseconds, and the child command 299.666 milliseconds.</desc>
-              <text x="28" y="65">0 ms</text><text x="661" y="65">441 ms</text><line class="axis" x1="90" y1="60" x2="700" y2="60"/>
-              <rect class="bar-blue" x="90" y="88" width="5" height="48"/><rect class="bar-amber" x="95" y="88" width="195" height="48"/><rect class="bar-purple" x="290" y="88" width="5" height="48"/><rect class="bar-green" x="295" y="88" width="405" height="48"/>
-              <text x="90" y="158">env</text><text x="132" y="113">prepare 141.0 ms</text><text x="413" y="113">delegated command 299.7 ms</text>
-            </svg>
-            <div class="mobile-chart" role="img" aria-label="Environment 0.001 milliseconds, prepare 140.983 milliseconds, locks 0.343 milliseconds, delegated command 299.666 milliseconds.">
-              <div class="mobile-bar-row"><span>Environment</span><div class="mobile-bar-track"><i class="fill-blue min-visible" style="width:0.01%"></i></div><strong>0.001 ms</strong></div>
-              <div class="mobile-bar-row"><span>Prepare</span><div class="mobile-bar-track"><i class="fill-amber" style="width:31.95%"></i></div><strong>141.0 ms</strong></div>
-              <div class="mobile-bar-row"><span>Locks</span><div class="mobile-bar-track"><i class="fill-purple min-visible" style="width:0.08%"></i></div><strong>0.3 ms</strong></div>
-              <div class="mobile-bar-row"><span>Command</span><div class="mobile-bar-track"><i class="fill-green" style="width:67.92%"></i></div><strong>299.7 ms</strong></div>
-            </div>
-            <p class="plot-data">Captured values: environment 0.001 ms, prepare 140.983 ms, locks 0.343 ms, command 299.666 ms, total 441.176 ms. The environment and lock phases are widened slightly so they remain visible.</p>
-          </figure>
-          <aside class="definition"><strong>Interpretation:</strong> a large <code>prepare</code> phase suggests synchronization or toolchain work; a large <code>locks</code> phase suggests contention; a large <code>command</code> phase means the time is inside Lake or the requested process. The phases are durations, not a nested flame graph, and they need not sum to total exactly.</aside>
-        </section>
-
-        <section id="repeated"><h2>Measure repeated commands with <code>lev profile</code></h2>
-          <p>Once the delegated command is the interesting layer, one run is weak evidence. This is where a quick shell loop usually appears and then survives in somebody's history with no record of warmups or individual samples. <code>lev profile</code> prepares the project and acquires shared locks once, executes optional warmups, then times each measured child process from immediately before process launch until it exits.</p>
-          <div class="command-block"><div class="command-label">Build profile</div><pre><code># Defaults to lake build
+        <section id="workflow-start"><h2>Work from wide measurements to narrow traces</h2>
+          <p>Opening a large <code>trace.profiler</code> tree too early can hide a simpler cause: toolchain synchronization, a lock wait, a cold run compared with a warm one, or one file that became much slower.</p>
+          <p>One timed run identifies the slow layer. Repeated samples show whether the slowdown is stable. File ranking locates the cost inside the project. A nested Lean trace comes last.</p>
+          <div class="command-block"><div class="command-label">A normal profiling pass</div><pre><code class="language-bash">lev --timings build --no-sync --offline
 lev profile --warmup 1 --repeat 5
-
-# Measure a target or arbitrary command
-lev profile --warmup 1 --repeat 5 -- lake build MyTarget
-lev profile --warmup 2 --repeat 10 -- lake test</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Captured profile report</div><pre><code>lev: profile warmup 1/1
-Build completed successfully.
-lev: profile sample 1/5
-Build completed successfully.
-lev: profile sample 2/5
-Build completed successfully.
-lev: profile sample 3/5
-Build completed successfully.
-lev: profile sample 4/5
-Build completed successfully.
-lev: profile sample 5/5
-Build completed successfully.
-profile: 5 samples, command `lake build`
-     1:    299.147 ms
-     2:    297.862 ms
-     3:    309.765 ms
-     4:    304.074 ms
-     5:    304.723 ms
-  min    297.862 ms  median    304.074 ms  mean    303.114 ms  max    309.765 ms</code></pre></div>
-          <p class="example-caption">This is a real warm profile from the same August 4 scratch project. Warmup progress appears separately and never enters the sample list.</p>
-          <figure class="plot"><figcaption>Five measured samples and their mean<span class="caption-detail">A dot is one complete child-process wall-clock duration.</span></figcaption>
-            <svg viewBox="0 0 760 260" role="img" aria-labelledby="samples-title samples-desc">
-              <title id="samples-title">Five profile sample durations</title><desc id="samples-desc">Samples are 299.147, 297.862, 309.765, 304.074, and 304.723 milliseconds. The mean is 303.114 milliseconds.</desc>
-              <line class="axis" x1="95" y1="205" x2="710" y2="205"/><line class="grid" x1="95" y1="155" x2="710" y2="155"/><line class="grid" x1="95" y1="105" x2="710" y2="105"/><line class="grid" x1="95" y1="55" x2="710" y2="55"/>
-              <text x="30" y="209">296</text><text x="30" y="159">301</text><text x="30" y="109">306</text><text x="30" y="59">311 ms</text>
-              <line class="mean-line" x1="95" y1="134" x2="710" y2="134"/><text x="570" y="126">mean 303.1 ms</text>
-              <circle class="sample-dot" cx="150" cy="174" r="7"/><circle class="sample-dot" cx="270" cy="186" r="7"/><circle class="sample-dot" cx="390" cy="67" r="7"/><circle class="sample-dot" cx="510" cy="124" r="7"/><circle class="sample-dot" cx="630" cy="118" r="7"/>
-              <text x="143" y="229">1</text><text x="263" y="229">2</text><text x="383" y="229">3</text><text x="503" y="229">4</text><text x="623" y="229">5</text>
-            </svg>
-            <div class="mobile-chart" role="img" aria-label="Five samples: 299.147, 297.862, 309.765, 304.074, and 304.723 milliseconds. Mean 303.114 milliseconds.">
-              <div class="mobile-bar-row"><span>Sample 1</span><div class="mobile-bar-track"><i class="fill-blue" style="width:21%"></i></div><strong>299.1</strong></div>
-              <div class="mobile-bar-row"><span>Sample 2</span><div class="mobile-bar-track"><i class="fill-green" style="width:12%"></i></div><strong>297.9</strong></div>
-              <div class="mobile-bar-row"><span>Sample 3</span><div class="mobile-bar-track"><i class="fill-amber" style="width:92%"></i></div><strong>309.8</strong></div>
-              <div class="mobile-bar-row"><span>Sample 4</span><div class="mobile-bar-track"><i class="fill-blue" style="width:54%"></i></div><strong>304.1</strong></div>
-              <div class="mobile-bar-row"><span>Sample 5</span><div class="mobile-bar-track"><i class="fill-green" style="width:58%"></i></div><strong>304.7</strong></div>
-              <div class="mobile-legend"><span>Scale begins at 296 ms</span><span>Mean: 303.1 ms</span></div>
-            </div>
-            <p class="plot-data">Captured samples: 299.147, 297.862, 309.765, 304.074, 304.723 ms. Summary: min 297.862, median 304.074, mean 303.114, max 309.765 ms.</p>
-          </figure>
-        </section>
-
-        <section id="warmups"><h2>What warmups do</h2>
-          <p>A warmup is a complete command execution that occurs before measurement. It can populate operating-system page caches, initialize compiler state persisted on disk, or let Lake discover that outputs are current. lev does not record warmup durations.</p>
-          <figure class="plot"><figcaption>Warmup and measured run sequence</figcaption>
-            <svg viewBox="0 0 760 180" role="img" aria-labelledby="warm-title warm-desc">
-              <title id="warm-title">One warmup followed by five samples</title><desc id="warm-desc">Environment preparation occurs once, one unmeasured warmup runs, and then five measured command processes run.</desc>
-              <rect class="bar-blue" x="40" y="58" width="110" height="48"/><rect class="bar-amber" x="166" y="58" width="90" height="48"/><rect class="bar-green" x="272" y="58" width="76" height="48"/><rect class="bar-green" x="364" y="58" width="76" height="48"/><rect class="bar-green" x="456" y="58" width="76" height="48"/><rect class="bar-green" x="548" y="58" width="76" height="48"/><rect class="bar-green" x="640" y="58" width="76" height="48"/>
-              <text x="61" y="87">prepare</text><text x="178" y="87">warmup</text><text x="297" y="87">1</text><text x="389" y="87">2</text><text x="481" y="87">3</text><text x="573" y="87">4</text><text x="665" y="87">5</text>
-              <text x="50" y="132">once</text><text x="171" y="132">not recorded</text><text x="355" y="132">measured samples</text>
-            </svg>
-            <div class="mobile-chart" role="img" aria-label="Prepare once, run one unrecorded warmup, then collect five measured samples.">
-              <div class="mobile-sequence"><span class="prepare">prepare</span><span class="warmup">warmup</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div>
-              <div class="mobile-legend"><span>Preparation happens once</span><span>Only runs 1-5 enter the statistics</span></div>
-            </div>
-          </figure>
-          <aside class="warning"><strong>Warm and incremental are different experiments from cold.</strong> Repeating <code>lake build</code> usually measures no-op or incremental behavior after the first run. To study clean builds, make cache and cleanup policy explicit and account for the extra work; do not quietly call a warm profile “build performance.”</aside>
-        </section>
-
-        <section id="statistics"><h2>Read the statistics carefully</h2>
-          <dl>
-            <dt><strong>Minimum</strong></dt><dd>The fastest observed sample. Useful as a lower bound, but easy to overvalue.</dd>
-            <dt><strong>Median</strong></dt><dd>The middle sample after sorting. Less sensitive than the mean to a single noisy run.</dd>
-            <dt><strong>Mean</strong></dt><dd>The arithmetic average. Useful for total expected cost, but pulled by outliers.</dd>
-            <dt><strong>Maximum</strong></dt><dd>The slowest observed sample. Investigate when tail latency matters.</dd>
-          </dl>
-          <p>The current report does not calculate standard deviation or confidence intervals. Keep the individual samples when making a serious comparison. Five samples can reveal obvious noise; larger, interleaved A/B runs are better evidence for small changes.</p>
-          <ul>
-            <li>Keep toolchain, project revision, target, power mode, and machine fixed.</li>
-            <li>Record whether caches are cold, warm, or intentionally cleared.</li>
-            <li>Avoid running unrelated CPU-, memory-, or I/O-heavy jobs at the same time.</li>
-            <li>Compare distributions and source changes, not only the best number.</li>
-          </ul>
-        </section>
-
-        <section id="json"><h2>Save a stable JSON report</h2>
-          <div class="command-block"><div class="command-label">Machine-readable profile</div><pre><code>lev profile \
-  --warmup 1 \
-  --repeat 5 \
-  --json \
-  --output profile.json \
-  -- lake build MyTarget</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Captured JSON report</div><pre><code class="language-json">{
-  "schema": "lev.cli.profile/v1",
-  "data": {
-    "project": "/tmp/lev-doc-profile.GP0wJ1/project",
-    "toolchain": "leanprover/lean4:v4.18.0",
-    "command": "lake build",
-    "warmup": 1,
-    "requested_repeats": 5,
-    "completed_repeats": 5,
-    "samples_ms": [
-      302.655627,
-      304.326952,
-      299.18028400000003,
-      298.12469000000004,
-      298.515086
-    ],
-    "summary": {
-      "min_ms": 298.12469000000004,
-      "median_ms": 299.18028400000003,
-      "mean_ms": 300.5605278,
-      "max_ms": 304.326952
-    },
-    "exit_code": 0
-  }
-}</code></pre></div>
-          <p class="example-caption">This JSON came from a second invocation on the same project, so its samples differ from the terminal capture above.</p>
-          <p>If a measured process fails, lev records that sample's elapsed time, stops immediately, writes a partial report with <code>completed_repeats</code>, and returns the child's exit code. If a warmup fails, no measured sample is reported: text output says so directly, and JSON sets <code>summary</code> to <code>null</code> instead of inventing zero timings.</p>
-        </section>
-
-        <section id="lean-profiler"><h2>Descend into Lean's profiler</h2>
-          <p>When one file or declaration is slow, process timing has done its job. Lean's native profiler can show nested elaborator and metaprogram work. The most useful modern entry point is <code>trace.profiler</code>.</p>
-          <p>I prefer to learn the trace format on a tiny declaration before opening a real proof. With the threshold at zero, even this definition exposes elaboration, kernel checking, compiler work, attributes, and linters. Once the nesting makes sense, raise the threshold and move to the slow file.</p>
-          <div class="command-block lean-block"><div class="command-label">Source used for the capture</div><pre><code class="language-lean">/-- some doc string -/
-@[simp]
-def hello := "world"</code></pre></div>
-          <div class="command-block"><div class="command-label">Capture every profiler scope</div><pre><code>lev run -- lake env lean \
-  -Dtrace.profiler=true \
-  -Dtrace.profiler.threshold=0 \
-  LeanFoundations/Logic/Basic.lean</code></pre></div>
-          <p><code>trace.profiler.threshold</code> is a filter: nested scopes below the threshold are omitted from the displayed tree. The default threshold in current Lean releases is 10 milliseconds. Lower it to expose more detail, but expect much larger output and profiler overhead.</p>
-          <div class="command-block output-block"><div class="command-label">Captured Lean 4.18 trace, abridged</div><pre><code>[Elab.command] [0.001532] /-- some doc string -/
-    @[simp]
-    def hello := "world"
-  [Meta.isDefEq] [0.000098] String =?= ?m.2
-  [Elab.def.processPreDef] [0.000839] process pre-definitions
-    [Kernel] [0.000028] typechecking declarations [hello]
-    [compiler] [0.000265] compiling old: [hello]
-    [Elab.attribute] [0.000439] applying [simp]</code></pre></div>
-          <p class="example-caption">Captured on August 4, 2026 from Lean 4.18.0. Unrelated instantiation and linter lines were removed, but every scope and duration shown above comes from that run.</p>
-          <figure class="plot"><figcaption>Scopes in the captured command trace<span class="caption-detail">The command scope contains the work below it. <code>processPreDef</code> in turn contains kernel, compiler, and attribute scopes.</span></figcaption>
-            <svg viewBox="0 0 760 250" role="img" aria-labelledby="trace-title trace-desc">
-              <title id="trace-title">Nested scopes from a captured Lean trace</title><desc id="trace-desc">The command takes 1.532 milliseconds. Definitional equality takes 0.098 milliseconds. Processing pre-definitions takes 0.839 milliseconds and contains kernel checking for 0.028 milliseconds, compilation for 0.265 milliseconds, and simp attribute processing for 0.439 milliseconds.</desc>
-              <text x="18" y="40">command</text><rect class="bar-blue" x="145" y="21" width="555" height="27"/><text x="610" y="40">1.532 ms</text>
-              <text x="38" y="79">isDefEq</text><rect class="bar-amber" x="160" y="60" width="35" height="27"/><text x="204" y="79">0.098 ms</text>
-              <text x="38" y="118">processPreDef</text><rect class="bar-green" x="160" y="99" width="304" height="27"/><text x="474" y="118">0.839 ms</text>
-              <text x="58" y="157">kernel</text><rect class="bar-purple" x="180" y="138" width="12" height="27"/><text x="201" y="157">0.028 ms</text>
-              <text x="58" y="196">compiler</text><rect class="bar-purple" x="180" y="177" width="96" height="27"/><text x="286" y="196">0.265 ms</text>
-              <text x="58" y="235">attribute</text><rect class="bar-purple" x="180" y="216" width="159" height="27"/><text x="349" y="235">0.439 ms</text>
-            </svg>
-            <div class="mobile-chart" role="img" aria-label="Command scope 1.532 milliseconds. Definitional equality 0.098 milliseconds. Processing pre-definitions 0.839 milliseconds, containing kernel checking 0.028 milliseconds, compilation 0.265 milliseconds, and attribute processing 0.439 milliseconds.">
-              <div class="mobile-trace">
-                <div><span>command</span><strong>1.532 ms</strong></div>
-                <div class="depth-1 alt"><span>isDefEq</span><strong>0.098 ms</strong></div>
-                <div class="depth-1"><span>processPreDef</span><strong>0.839 ms</strong></div>
-                <div class="depth-2"><span>kernel</span><strong>0.028 ms</strong></div>
-                <div class="depth-2"><span>compiler</span><strong>0.265 ms</strong></div>
-                <div class="depth-2"><span>attribute</span><strong>0.439 ms</strong></div>
-              </div>
-            </div>
-          </figure>
-        </section>
-
-        <section id="lean-output"><h2>Export a Firefox Profiler trace</h2>
-          <p>For a large trace, use Lean's Firefox Profiler-compatible JSON output instead of reading thousands of terminal lines. Pass the output option when the Lean process starts so the frontend knows to construct the export.</p>
-          <div class="command-block"><div class="command-label">Run inside the selected project environment</div><pre><code>lev run -- lake env lean \
-  -Dtrace.profiler=true \
-  -Dtrace.profiler.threshold=10 \
-  -Dtrace.profiler.output=lean-profile.json \
-  MyProject/SlowProof.lean</code></pre></div>
-          <p>Open <code>lean-profile.json</code> in <a href="https://profiler.firefox.com/">Firefox Profiler</a>. The output is structured trace data, not statistical CPU sampling: it visualizes scopes that Lean explicitly instruments.</p>
-          <aside class="note"><strong>Why the command-line <code>-D</code> form?</strong> A file-level <code>set_option trace.profiler.output ...</code> is too late for frontend-wide export setup in current Lean. Supplying it at process start is the reliable path. Option availability and exact output can vary by pinned Lean release.</aside>
-        </section>
-
-        <section id="heartbeats"><h2>Wall time, heartbeats, and diagnostics</h2>
-          <div class="command-block lean-block"><div class="command-label">Heartbeat-mode trace</div><pre><code class="language-lean">set_option trace.profiler true
-set_option trace.profiler.useHeartbeats true
-set_option trace.profiler.threshold 1000
-
-theorem proof_under_test (n : Nat) : n + 0 = n := by
-  exact Nat.add_zero n</code></pre></div>
-          <p>With <code>trace.profiler.useHeartbeats</code>, trace values are heartbeat counts rather than seconds and the threshold uses heartbeats too. Heartbeats are a deterministic-work budget maintained by Lean. They are useful when elapsed time is noisy, but they are not CPU cycles and do not model I/O or parallel scheduling.</p>
-          <div class="table-wrap"><table><thead><tr><th>Mechanism</th><th>Measures</th><th>Common mistake</th></tr></thead><tbody>
-            <tr><th>Wall clock</th><td>Elapsed real time on this machine</td><td>Assuming one noisy run proves a regression.</td></tr>
-            <tr><th>Heartbeats</th><td>Lean's deterministic-work counter</td><td>Calling it milliseconds or hardware instructions.</td></tr>
-            <tr><th><code>maxHeartbeats</code></th><td>A limit that can stop excessive elaboration</td><td>Raising it instead of investigating a slow proof.</td></tr>
-            <tr><th><code>diagnostics true</code></th><td>Extra information when limits such as heartbeats or recursion depth are reached</td><td>Treating it as a general-purpose profiler.</td></tr>
-          </tbody></table></div>
-          <p>Lean also retains the older <code>profiler</code> option, which reports flatter exclusive timing categories:</p>
-          <div class="command-block"><div class="command-label">Flat native profiler</div><pre><code>lev run -- lake env lean \
-  -Dprofiler=true \
-  -Dprofiler.threshold=100 \
-  MyProject/SlowProof.lean</code></pre></div>
-          <p>Use <code>trace.profiler</code> when hierarchy matters. Use the flat <code>profiler</code> for a compact view of exclusive component times. Neither replaces an external sampling profiler when the question is native CPU stacks, allocation, or operating-system behavior.</p>
-        </section>
-
-        <section id="workflow"><h2>A profiling workflow you can repeat</h2>
-          <div class="steps">
-            <article><h3>Observe one real run</h3><p>Run <code>lev --timings build</code>. Decide whether the delay is environment preparation, lock contention, or the delegated command.</p></article>
-            <article><h3>Make the experiment explicit</h3><p>Name the target and decide whether you are studying a cold, incremental, or no-op build. Record the project revision and toolchain.</p></article>
-            <article><h3>Collect repeated samples</h3><p>Use <code>lev profile --warmup 1 --repeat 5 -- …</code> as a starting point. Save JSON for comparisons rather than transcribing the mean.</p></article>
-            <article><h3>Narrow to a module</h3><p>Use Lake targets and build output to identify the slow file. Profile that file in the same pinned environment.</p></article>
-            <article><h3>Trace inside Lean</h3><p>Enable <code>trace.profiler</code> temporarily, begin with a useful threshold, and export JSON only when the terminal hierarchy becomes unwieldy.</p></article>
-            <article><h3>Change one cause, then repeat</h3><p>Compare like with like. Remove temporary profiler options before committing production source unless the project intentionally keeps a profiling fixture.</p></article>
+lev inspect performance --files --repeat 3
+lev run -- lake env lean -Dtrace.profiler=true Path/SlowFile.lean</code></pre></div>
+          <div class="command-ladder">
+            <article class="ladder-step">
+              <div class="ladder-index">01</div>
+              <div class="ladder-body"><span class="ladder-command">lev --timings build</span><h3>Measure one complete run</h3><p>Before you compare branches or start editing proofs, get one phase split that tells you whether the delay came from lev orchestration, lock waiting, or the delegated command itself.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">02</div>
+              <div class="ladder-body"><span class="ladder-command">lev profile --warmup 1 --repeat 5</span><h3>Collect a small sample set</h3><p>The report records repeat counts, warmups, raw samples, and summary statistics.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">03</div>
+              <div class="ladder-body"><span class="ladder-command">lev inspect performance --files --repeat 3</span><h3>Rank project files</h3><p>If the command phase still dominates, measure individual modules and identify the slow one.</p></div>
+            </article>
+            <article class="ladder-step">
+              <div class="ladder-index">04</div>
+              <div class="ladder-body"><span class="ladder-command">trace.profiler</span><h3>Trace the selected file</h3><p>Once the file is clear, the nested Lean trace has a bounded question to answer.</p></div>
+            </article>
           </div>
         </section>
 
-        <section id="limits"><h2>What these tools do not measure</h2>
-          <ul>
-            <li><code>lev profile</code> does not attribute time to functions, tactics, or allocations. It sees only child-process elapsed time.</li>
-            <li><code>--timings</code> does not split Lake's own scheduler or individual module builds.</li>
-            <li>Lean trace profiling records instrumented scopes; it is not a sampling profiler and may omit uninstrumented native work.</li>
-            <li>Profiling changes execution slightly. Very low trace thresholds can produce enough output to distort the run.</li>
-            <li>A warm no-op build says little about a clean build, and a clean build says little about editor feedback after one changed theorem.</li>
+        <section id="layers"><h2>Four questions, four tools</h2>
+          <p>A single wall-clock number is too vague for most Lean performance work. It cannot tell you whether lev prepared an environment, a process waited on a lock, Lake rebuilt a target, or Lean spent the time deep inside one elaboration scope.</p>
+          <ul class="profile-stack" aria-label="Profiling layers">
+            <li class="profile-layer"><strong><code>lev --timings</code></strong><span>One end-to-end command, split into lev environment, preparation, lock, delegated command, and total phases.</span></li>
+            <li class="profile-layer"><strong><code>lev profile</code></strong><span>Repeated wall-clock duration of a complete child command, with optional warmups, JSON output, and stable summary fields.</span></li>
+            <li class="profile-layer"><strong><code>lev inspect performance --files</code></strong><span>A median-ranked pass over project source files, with saved baselines and regression thresholds.</span></li>
+            <li class="profile-layer"><strong>Lean profiler</strong><span>Nested elaborator, metaprogram, kernel, and compiler trace scopes inside one Lean process.</span></li>
           </ul>
+          <div class="contrast-grid">
+            <article class="contrast-card primary">
+              <h3>Good questions for the wide tools</h3>
+              <ul>
+                <li>Why did this one build feel slow?</li>
+                <li>Did yesterday's import cleanup actually change wall time?</li>
+                <li>Is the slowdown in environment work or in the command itself?</li>
+              </ul>
+            </article>
+            <article class="contrast-card secondary">
+              <h3>Good questions for the narrow tools</h3>
+              <ul>
+                <li>Which file became expensive?</li>
+                <li>Which tactic, elaboration pass, or compiler scope dominated inside that file?</li>
+                <li>Is the work deterministic enough that heartbeats matter more than wall time?</li>
+              </ul>
+            </article>
+          </div>
+          <p>If <code>--timings</code> says the delegated command dominated, stop investigating locks. If file ranking points to one module, stop treating the whole project as uniformly slow. Each measurement should narrow the next question.</p>
         </section>
 
-        <nav class="page-nav" aria-label="Previous and next pages"><a href="imports.html"><small>Previous</small><strong>Imports &amp; graphs</strong></a><a href="automation.html"><small>Next</small><strong>Automation</strong></a></nav>
-        <footer class="site-footer"><p>Native Lean option names in this guide were validated against an installed Lean 4.30 release candidate; use the project's pinned Lean help and sources when working with older releases.</p></footer>
-      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#layers">Three layers</a><a href="#timings">lev timings</a><a href="#repeated">Repeated profiles</a><a href="#warmups">Warmups</a><a href="#statistics">Statistics</a><a href="#json">JSON report</a><a href="#lean-profiler">Lean profiler</a><a href="#lean-output">Firefox export</a><a href="#heartbeats">Heartbeats</a><a href="#workflow">Workflow</a><a href="#limits">Limits</a></nav></div></main>
+        <section id="discipline"><h2>Record enough context to compare runs</h2>
+          <p>Most performance arguments go sideways because people compare unlike runs. A cold build gets compared to a warm one, a new toolchain to an old baseline, or one developer laptop to CI without even naming the difference.</p>
+          <ul>
+            <li>Name the experiment: cold build, warm no-op build, incremental rebuild after one edit, explicit target, or single-file elaboration.</li>
+            <li>Save the JSON report with the summary. It preserves the command, raw samples, run conditions, and schema version.</li>
+            <li>Keep the project revision, Lean toolchain, target, machine, and cache policy fixed while comparing runs.</li>
+            <li>Stop when the current measurement answers the question. A larger trace is not automatically better evidence.</li>
+          </ul>
+          <aside role="note" class="definition"><strong>Wall time and heartbeats answer different questions.</strong> Wall time tells you how the machine actually felt. Heartbeats approximate deterministic work inside Lean. Use both when you care about portability across machines, but do not pretend they are interchangeable.</aside>
+        </section>
+
+        <section id="next"><h2>Related profiling pages</h2>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Page</th><th scope="col">Contents</th></tr></thead><tbody>
+            <tr><th scope="row"><a href="profiling-measurement.html">Timing and samples</a></th><td>Phase timing, warmups, repeated samples, statistics, and JSON reports.</td></tr>
+            <tr><th scope="row"><a href="profiling-lean.html">Slow files and Lean profiler</a></th><td>Project file ranking, baselines, <code>trace.profiler</code>, Firefox export, and heartbeats.</td></tr>
+            <tr><th scope="row"><a href="inspection.html">Inspection</a></th><td>Environment drift, dependency selection, and rebuild causes that may resemble performance regressions.</td></tr>
+            <tr><th scope="row"><a href="reference.html#analysis">Command reference</a></th><td>The profiling and inspection command families in one list.</td></tr>
+          </tbody></table></div>
+        </section>
+
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="imports-in-practice.html"><small>Previous</small><strong>Import graphs &amp; case study</strong></a><a href="profiling-measurement.html"><small>Next</small><strong>Timing &amp; samples</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#workflow-start">Profiling sequence</a><a href="#layers">Measurement layers</a><a href="#discipline">Comparison discipline</a><a href="#next">Related pages</a></nav></div></main>
     </div>
   </body>
 </html>

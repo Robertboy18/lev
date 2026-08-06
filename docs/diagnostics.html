@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="lev finding fields, exit behavior, troubleshooting notes, and coding-agent guidance.">
+    <title>Diagnostics and exits | lev</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css"><script defer src="vendor/highlight.min.js"></script><script defer src="vendor/highlightjs-lean.min.js"></script><script defer src="app.js"></script>
+  </head>
+  <body data-page="diagnostics">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
+    <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
+    <div class="docs-shell">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+        <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+      </nav></div></aside>
+      <main id="main-content"><div class="article-shell"><article class="article">
+        <header class="page-header"><p class="eyebrow">Reference</p><h1>Diagnostics and exits</h1><p class="lead">Findings describe the observed state. Policy fields and process exit status say whether that state stopped the command.</p>
+          <nav class="chapter-links" aria-label="Machine-readable guide chapters"><p>Machine-readable output</p><a href="contracts.html">JSON contracts</a><a href="schema-inventory.html">Schema inventory</a><a href="diagnostics.html" aria-current="page">Diagnostics &amp; exits</a></nav>
+        </header>
+
+        <section id="finding"><h2>Finding anatomy</h2>
+          <p>Diagnostic commands reuse a small Finding shape. That keeps machine consumers stable without turning the terminal report into a JSON dump.</p>
+          <div class="command-block output-block"><div class="command-label">One finding object</div><pre><code class="language-json">{
+  "id": "environment.runtime.selected",
+  "category": "environment",
+  "state": "passed",
+  "severity": "info",
+  "policy": "observe",
+  "title": "Resolved Lean environment",
+  "detail": "lev selected the local project environment.",
+  "evidence": {
+    "selector": "local"
+  },
+  "remediation": null,
+  "elapsed_ms": 0.24
+}</code></pre></div>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Field</th><th scope="col">Meaning</th></tr></thead><tbody>
+            <tr><th scope="row"><code>id</code></th><td>A stable machine-readable identifier such as <code>environment.runtime.selected</code>.</td></tr>
+            <tr><th scope="row"><code>category</code></th><td>The part of the system that owns the finding, such as environment, project, dependency, cache, or workspace.</td></tr>
+            <tr><th scope="row"><code>state</code></th><td>Whether the check <code>passed</code>, was <code>raised</code>, or was <code>not_applicable</code>.</td></tr>
+            <tr><th scope="row"><code>severity</code></th><td>How the observed condition is classified: <code>info</code>, <code>warning</code>, or <code>error</code>.</td></tr>
+            <tr><th scope="row"><code>policy</code></th><td>What a policy command does with the finding: <code>observe</code>, <code>pass</code>, or <code>fail</code>.</td></tr>
+            <tr><th scope="row"><code>title</code>, <code>detail</code></th><td>A short label and the human-readable explanation.</td></tr>
+            <tr><th scope="row"><code>evidence</code></th><td>Optional structured facts behind the finding.</td></tr>
+            <tr><th scope="row"><code>remediation</code></th><td>An optional concrete next step.</td></tr>
+            <tr><th scope="row"><code>elapsed_ms</code></th><td>Optional timing for the check, in milliseconds.</td></tr>
+          </tbody></table></div>
+          <p>Severity describes the evidence lev found. Policy determines whether that evidence fails a gate. An error can remain observational, and a policy failure is counted from <code>policy: "fail"</code>, not inferred from severity.</p>
+        </section>
+
+        <section id="exit"><h2>Exit behavior</h2>
+          <p>Exit behavior follows the job. Observational commands report findings and return 0. Gate commands return nonzero when the gate fails. Delegated and workspace commands preserve the child process status when that is the most useful result.</p>
+          <h3>Observational commands</h3>
+          <p>Bare <code>lev inspect</code>, <code>lev inspect environment</code>, and <code>lev inspect dependencies</code> return 0 after writing their report, even when it contains warnings or errors. These commands collect evidence; they do not enforce project policy.</p>
+          <h3>Policy and drift commands</h3>
+          <ul>
+            <li><code>lev inspect graph</code> returns 1 when it finds an import cycle.</li>
+            <li><code>lev deps outdated --check</code> returns 1 when a compatible update exists.</li>
+            <li><code>lev inspect imports --check</code> returns nonzero when imports can be minimized or validation fails.</li>
+            <li><code>lev inspect trust</code> returns 1 for policy violations or an incomplete declaration scan.</li>
+            <li><code>lev check</code> returns 1 for a provably stale selected revision and for other configured gate failures.</li>
+          </ul>
+          <h3>Delegated and workspace commands</h3>
+          <ul>
+            <li><code>lev inspect performance</code> stops on the first failed warmup or sample and returns that command's code.</li>
+            <li>Delegated process failures preserve the child's exit code where applicable.</li>
+            <li>Workspace operations stop at the first failure unless <code>--keep-going</code> is set; the first failure code is retained.</li>
+          </ul>
+          <h3>Shell pattern</h3>
+          <p>When a command can fail while still emitting useful JSON, capture stdout and exit status separately. That way the report is still available for triage.</p>
+          <div class="code-pair">
+            <div class="command-block"><div class="command-label">Keep the report and the status code</div><pre><code class="language-bash">status=0
+lev check --json &gt; check.json || status=$?
+printf 'exit=%s\n' "$status"
+jq -r '.schema' check.json</code></pre></div>
+            <div class="command-block output-block"><div class="command-label">Example result</div><pre><code class="language-plaintext">exit=1
+lev.cli.check/v1</code></pre></div>
+          </div>
+        </section>
+
+        <section id="troubleshooting"><h2>Troubleshooting</h2>
+          <p>Read the table left to right: symptom, likely cause, then the narrowest useful next command. That order usually settles the problem faster than bouncing between sync, build, and cache commands.</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Symptom</th><th scope="col">Likely cause</th><th scope="col">First command</th></tr></thead><tbody>
+            <tr><th scope="row">"No Lake project found"</th><td>The current directory is outside any Lake root.</td><td><code>lev --project PATH ...</code> or <code>cd</code> into the project.</td></tr>
+            <tr><th scope="row">Lock drift reported in CI</th><td>A Lakefile, toolchain, or manifest change was committed without <code>lev lock</code>.</td><td><code>lev lock --check</code> locally, then <code>lev lock</code> if the change was intended.</td></tr>
+            <tr><th scope="row">A transitive revision looks surprising</th><td>Different parents may have recorded different requests, or the selected manifest may be stale.</td><td><code>lev inspect dependencies</code></td></tr>
+            <tr><th scope="row">Offline run fails</th><td>A required toolchain or dependency object is not local yet.</td><td><code>lev sync</code> once with network access, then retry <code>--offline</code>.</td></tr>
+            <tr><th scope="row">Toolchain cannot be resolved</th><td>A channel or alias needs resolution and no elan fallback is available.</td><td><code>lev inspect environment</code>, then <code>lev toolchain install SELECTOR</code>.</td></tr>
+            <tr><th scope="row">Builds slow on shared storage</th><td>Project and <code>.lake</code> writes are landing on a networked filesystem.</td><td><code>LEV_CACHE_DIR=.../scratch lev --local build</code></td></tr>
+            <tr><th scope="row">Unexpected cache size</th><td>Old artifacts accumulated across toolchains and projects.</td><td><code>lev cache status</code>, then <code>lev cache gc --max-age-days N</code> before <code>--apply</code>.</td></tr>
+            <tr><th scope="row">Suspected cache corruption</th><td>Interrupted writes or external modification of store contents.</td><td><code>lev cache verify</code> reports integrity problems but does not repair them. Remove and repopulate the affected cache data before retrying.</td></tr>
+          </tbody></table></div>
+          <p>When a delegated Lake or Lean error is the problem, re-run with <code>-v</code> to separate lev's orchestration decisions from the child command's own output before filing an issue against either tool.</p>
+        </section>
+
+        <section id="agents"><h2>Use lev with a coding agent</h2>
+          <p>The repository includes a project skill covering environment reproduction, dependency changes, import minimization, Lean source quality, and worktree safety.</p>
+          <div class="command-block"><div class="command-label">Agent instruction</div><pre><code class="language-plaintext">Read .agents/skills/lev/SKILL.md before working on this Lean project.</code></pre></div>
+          <p>Agents that support skill discovery can load it directly. For other tools it remains ordinary, reviewable project documentation that tells the next tool how this project expects to be handled.</p>
+        </section>
+
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="schema-inventory.html"><small>Previous</small><strong>Schema inventory</strong></a><a href="index.html"><small>Back to</small><strong>Overview</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#finding">Finding fields</a><a href="#exit">Exit behavior</a><a href="#troubleshooting">Troubleshooting</a><a href="#agents">Coding agents</a></nav></div></main>
+    </div>
+  </body>
+</html>

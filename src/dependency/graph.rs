@@ -114,7 +114,7 @@ impl DependencyGraph {
         if target == self.root {
             return Some(vec![self.root.clone()]);
         }
-        // Breadth-first paths make `lev why` return the shortest explanation,
+        // Breadth-first paths make `lev deps why` return the shortest explanation,
         // which is generally the most useful one in a shared dependency DAG.
         let mut queue = VecDeque::new();
         let mut seen = HashSet::new();
@@ -204,7 +204,11 @@ fn direct_names(manifest: &LakeManifest) -> Vec<String> {
     names
 }
 
-fn package_root(root: &Path, packages_dir: &Path, package: &ManifestPackage) -> Result<PathBuf> {
+pub(crate) fn package_root(
+    root: &Path,
+    packages_dir: &Path,
+    package: &ManifestPackage,
+) -> Result<PathBuf> {
     let mut path = if package.kind == "path" {
         let directory = package
             .dir

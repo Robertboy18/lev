@@ -9,6 +9,7 @@ mod cache;
 mod cli;
 mod core;
 mod dependency;
+mod diagnostics;
 mod project;
 mod toolchain;
 

@@ -1,8 +1,8 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="lev command reference and machine-readable output contracts.">
+    <meta name="description" content="lev command map for common jobs, command families, and everyday recipes.">
     <title>Command reference | lev</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css"><script defer src="vendor/highlight.min.js"></script><script defer src="vendor/highlightjs-lean.min.js"></script><script defer src="app.js"></script>
@@ -12,83 +12,112 @@
     <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
-        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Imports &amp; graphs</a><a href="profiling.html" data-page-link="profiling">Profiling</a><a href="automation.html" data-page-link="automation">Automation</a></div>
-        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
       </nav></div></aside>
       <main id="main-content"><div class="article-shell"><article class="article">
-        <header class="page-header"><p class="eyebrow">Reference</p><h1>Command map</h1><p class="lead">A compact index of lev's surface. The CLI remains the authority for exact options in the installed version.</p></header>
+        <header class="page-header"><p class="eyebrow">Reference</p><h1>Command map</h1><p class="lead">This page lists lev commands by task and command family. The linked guides contain complete examples, edge cases, and behavior.</p></header>
 
-        <section id="help"><h2>Help and global options</h2>
-          <div class="command-block"><div class="command-label">Discover commands</div><pre><code>lev -h                 # everyday commands
-lev --help             # complete command list
-lev profile --help     # command-specific options
-lev completions bash   # shell completion definition</code></pre></div>
-          <div class="table-wrap"><table><thead><tr><th>Global option</th><th>Meaning</th></tr></thead><tbody>
-            <tr><th><code>--project PATH</code></th><td>Start project discovery from an explicit path.</td></tr>
-            <tr><th><code>-q, --quiet</code></th><td>Suppress lev informational output; delegated command behavior remains its own.</td></tr>
-            <tr><th><code>-v, --verbose</code></th><td>Show cache reuse and orchestration details.</td></tr>
-            <tr><th><code>--no-progress</code></th><td>Hide progress updates from long-running operations.</td></tr>
-            <tr><th><code>--local</code></th><td>Run eligible commands in a persistent local workspace.</td></tr>
-            <tr><th><code>--timings</code></th><td>Print total and recorded phase durations to stderr.</td></tr>
-            <tr><th><code>--cache-dir PATH</code></th><td>Override <code>LEV_CACHE_DIR</code>.</td></tr>
-            <tr><th><code>--data-dir PATH</code></th><td>Override <code>LEV_DATA_DIR</code> for persistent toolchain objects.</td></tr>
+        <section id="start-here"><h2>Common entry points</h2>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Task</th><th scope="col">Commands</th><th scope="col">Guide</th></tr></thead><tbody>
+            <tr><th scope="row">Verify a fresh checkout</th><td><code>lev inspect</code>, <code>lev doctor</code>, <code>lev sync --frozen</code></td><td><a href="getting-started.html#confidence">Getting started</a></td></tr>
+            <tr><th scope="row">Minimize broad imports</th><td><code>lev shake</code>, <code>lev inspect imports</code></td><td><a href="imports.html#answer">Import minimization</a></td></tr>
+            <tr><th scope="row">Investigate a slow build</th><td><code>lev --timings build</code>, <code>lev profile</code>, <code>lev inspect performance --files</code></td><td><a href="profiling.html#workflow-start">Profiling</a></td></tr>
+            <tr><th scope="row">Define repository checks</th><td><code>lev verify</code>, <code>lev check</code>, <code>lev task</code></td><td><a href="automation.html#shape">Automation</a></td></tr>
+          </tbody></table></div>
+        </section>
+
+        <section id="help"><h2>Help, top-level surface, and direct shortcuts</h2>
+          <div class="command-block"><div class="command-label">Discover commands</div><pre><code>lev --help
+lev inspect --help
+lev inspect performance --help
+lev workspace --help
+lev completions bash</code></pre></div>
+          <p>The visible curated top level has fourteen commands: <code>init</code>, <code>sync</code>, <code>lock</code>, <code>deps</code>, <code>inspect</code>, <code>run</code>, <code>build</code>, <code>toolchain</code>, <code>cache</code>, <code>doctor</code>, <code>check</code>, <code>shake</code>, <code>profile</code>, and <code>verify</code>. Advanced roots such as <code>workspace</code>, <code>task</code>, <code>matrix</code>, <code>script</code>, <code>watch</code>, <code>project</code>, <code>test</code>, and <code>lint</code> remain available without crowding the first screen.</p>
+          <div class="contrast-grid">
+            <article class="contrast-card primary">
+              <h3>Direct familiar commands</h3>
+              <ul>
+                <li><code>lev doctor</code></li>
+                <li><code>lev shake</code></li>
+                <li><code>lev profile</code></li>
+                <li><code>lev verify</code></li>
+              </ul>
+            </article>
+            <article class="contrast-card secondary">
+              <h3>Grouped counterparts</h3>
+              <ul>
+                <li><code>lev inspect environment</code></li>
+                <li><code>lev inspect imports</code></li>
+                <li><code>lev inspect performance</code></li>
+                <li><code>lev check</code></li>
+              </ul>
+            </article>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Global option</th><th scope="col">Meaning</th></tr></thead><tbody>
+            <tr><th scope="row"><code>--project PATH</code></th><td>Start project discovery from an explicit path.</td></tr>
+            <tr><th scope="row"><code>-q, --quiet</code></th><td>Suppress lev informational output; delegated command behavior remains its own.</td></tr>
+            <tr><th scope="row"><code>-v, --verbose</code></th><td>Show cache reuse and orchestration details.</td></tr>
+            <tr><th scope="row"><code>--no-progress</code></th><td>Hide progress updates from long-running operations.</td></tr>
+            <tr><th scope="row"><code>--local</code></th><td>Run eligible commands in a persistent local workspace.</td></tr>
+            <tr><th scope="row"><code>--timings</code></th><td>Print total and recorded phase durations to stderr.</td></tr>
+            <tr><th scope="row"><code>--cache-dir PATH</code></th><td>Override <code>LEV_CACHE_DIR</code>.</td></tr>
+            <tr><th scope="row"><code>--data-dir PATH</code></th><td>Override <code>LEV_DATA_DIR</code> for persistent toolchain objects.</td></tr>
           </tbody></table></div>
         </section>
 
         <section id="env-vars"><h2>Environment variables</h2>
           <p>Every variable has a command-line equivalent, so scripts can choose whichever form is easier to review. Command-line flags win when both are present.</p>
-          <div class="table-wrap"><table><thead><tr><th>Variable</th><th>Flag</th><th>Meaning</th></tr></thead><tbody>
-            <tr><th><code>LEV_CACHE_DIR</code></th><td><code>--cache-dir</code></td><td>Location of the shared cache: Git objects, dependency environments, Lake artifacts, local workspaces. Safe to delete or point at scratch storage.</td></tr>
-            <tr><th><code>LEV_DATA_DIR</code></th><td><code>--data-dir</code></td><td>Location of persistent verified toolchain objects. Deleting it forces toolchain reinstalls.</td></tr>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Variable</th><th scope="col">Flag</th><th scope="col">Meaning</th></tr></thead><tbody>
+            <tr><th scope="row"><code>LEV_CACHE_DIR</code></th><td><code>--cache-dir</code></td><td>Shared cache location for Git objects, dependency environments, Lake artifacts, and local workspaces.</td></tr>
+            <tr><th scope="row"><code>LEV_DATA_DIR</code></th><td><code>--data-dir</code></td><td>Persistent verified toolchain object store.</td></tr>
           </tbody></table></div>
-          <p class="example-caption">Set the variables in CI cache configuration so restore and save steps target the same directories lev actually uses.</p>
         </section>
 
         <section id="project"><h2>Project lifecycle</h2>
           <div class="command-grid">
             <div><code>lev init</code><span>Create a standard Lake project pinned to a Lean toolchain.</span></div>
-            <div><code>lev sync</code><span>Create or update project state from locks.</span></div>
+            <div><code>lev sync</code><span>Materialize the toolchain and revisions from <code>lake-manifest.json</code>, then refresh <code>lev.lock</code>.</span></div>
             <div><code>lev lock</code><span>Generate or verify base and version-specific environment locks.</span></div>
-            <div><code>lev pin</code><span>Change the project's <code>lean-toolchain</code> selection.</span></div>
-            <div><code>lev use</code><span>Make an already resolved environment the project default.</span></div>
-            <div><code>lev doctor</code><span>Inspect Lean, Lake, Git, project, and store configuration.</span></div>
-            <div><code>lev audit</code><span>Check local lock, toolchain, and dependency checkout integrity.</span></div>
-            <div><code>lev export</code><span>Write dependency inventory or CycloneDX SBOM data.</span></div>
+            <div><code>lev project pin</code><span>Change the project's <code>lean-toolchain</code> selector.</span></div>
+            <div><code>lev project use</code><span>Make an already resolved environment the project default.</span></div>
+            <div><code>lev inspect</code><span>Summarize the project, toolchain, lock, stores, and available build metadata.</span></div>
+            <div><code>lev project audit</code><span>Check local lock, toolchain, and dependency checkout integrity.</span></div>
+            <div><code>lev project export</code><span>Write dependency inventory or CycloneDX SBOM data.</span></div>
             <div><code>lev self</code><span>Check for updates, install a released binary, or uninstall lev.</span></div>
             <div><code>lev completions</code><span>Generate completion definitions for a supported shell.</span></div>
           </div>
-          <p>See <a href="getting-started.html#existing">adopting an existing project</a> and <a href="environments.html#locks">lock modes and drift recovery</a> for complete workflows.</p>
+          <p>See <a href="getting-started.html#existing">adopting an existing project</a> and <a href="environments.html#locks">lock modes and drift recovery</a> for complete examples.</p>
         </section>
 
         <section id="execution"><h2>Build and execution</h2>
           <div class="command-grid">
             <div><code>lev build</code><span>Synchronize, then invoke <code>lake build</code>.</span></div>
             <div><code>lev run</code><span>Run an arbitrary process in the selected environment.</span></div>
-            <div><code>lev test</code><span>Run the project's Lake test driver.</span></div>
-            <div><code>lev lint</code><span>Run the project's Lake lint driver.</span></div>
-            <div><code>lev check</code><span>Elaborate one Lean source file through Lake.</span></div>
-            <div><code>lev clean</code><span>Remove project build outputs through Lake.</span></div>
+            <div><code>lev run lake test</code><span>Run the project's Lake test driver.</span></div>
+            <div><code>lev run lake lint</code><span>Run the project's Lake lint driver.</span></div>
+            <div><code>lev check --file FILE.lean</code><span>Elaborate one Lean source file through Lake.</span></div>
+            <div><code>lev check [TARGET...]</code><span>Run the ordered project verification gate.</span></div>
             <div><code>lev task</code><span>List or run commands configured in <code>lev.toml</code>.</span></div>
             <div><code>lev script</code><span>Run or check one Lean file with inline dependency metadata.</span></div>
             <div><code>lev watch</code><span>Debounce project file events and rerun a command.</span></div>
             <div><code>lev matrix</code><span>Run one command in several isolated Lean environments.</span></div>
           </div>
-          <p>Build-like commands commonly accept <code>--lean TOOLCHAIN</code>, <code>--no-sync</code>, and <code>--offline</code>. Use command help rather than assuming every option applies everywhere.</p>
-          <p>See <a href="profiling.html#timings">one-run timings</a>, <a href="automation.html#watch">watch behavior</a>, and <a href="automation.html#tasks">tasks and inline scripts</a>.</p>
+          <p><code>lev check --file FILE.lean</code> is the explicit new-script form for single-file elaboration. The older positional form still works in compatibility cases, but <code>--file</code> avoids ambiguity with project build targets.</p>
         </section>
 
         <section id="dependencies"><h2>Dependencies and tools</h2>
           <div class="command-grid">
-            <div><code>lev add</code><span>Add or replace a dependency in <code>lakefile.toml</code>.</span></div>
-            <div><code>lev remove</code><span>Remove a declarative dependency.</span></div>
-            <div><code>lev update</code><span>Update locked dependencies through Lake.</span></div>
-            <div><code>lev outdated</code><span>Report newer compatible Reservoir releases.</span></div>
-            <div><code>lev upgrade</code><span>Preview or apply a direct-dependency upgrade transaction.</span></div>
+            <div><code>lev deps add</code><span>Add or replace a dependency in <code>lakefile.toml</code>.</span></div>
+            <div><code>lev deps remove</code><span>Remove a declarative dependency.</span></div>
+            <div><code>lev deps update</code><span>Update locked dependencies through Lake.</span></div>
+            <div><code>lev deps outdated</code><span>Report newer compatible Reservoir releases.</span></div>
+            <div><code>lev deps upgrade</code><span>Preview or apply a direct-dependency upgrade transaction.</span></div>
             <div><code>lev deps</code><span>Inspect dependencies recorded by the Lake manifest.</span></div>
-            <div><code>lev tree</code><span>Print the resolved dependency tree.</span></div>
-            <div><code>lev why</code><span>Explain why a package occurs in the dependency graph.</span></div>
+            <div><code>lev deps tree</code><span>Print the resolved dependency tree.</span></div>
+            <div><code>lev deps why</code><span>Explain why a package occurs in the dependency graph.</span></div>
             <div><code>lev toolchain</code><span>Install, list, garbage-collect, and remove Lean toolchains.</span></div>
             <div><code>lev tool</code><span>Install and run Lean package executables outside a project.</span></div>
           </div>
@@ -97,102 +126,55 @@ lev completions bash   # shell completion definition</code></pre></div>
 
         <section id="analysis"><h2>Analysis and reproducibility</h2>
           <div class="command-grid">
-            <div><code>lev shake</code><span>Infer, check, and transactionally apply minimal imports. Alias: <code>lev imports</code>.</span></div>
-            <div><code>lev graph</code><span>Render project module imports as text, JSON, or Graphviz DOT.</span></div>
-            <div><code>lev profile</code><span>Measure repeated child commands with optional warmups.</span></div>
-            <div><code>lev verify</code><span>Run lock, audit, toolchain, build, and optional policy phases.</span></div>
-            <div><code>lev bundle</code><span>Create a deterministic archive of locked project sources.</span></div>
-            <div><code>lev publish</code><span>Verify and upload Lake artifacts to an existing GitHub release.</span></div>
+            <div><code>lev shake</code> / <code>lev inspect imports</code><span>Infer, check, and transactionally apply minimal imports. Hidden compatibility spelling: <code>lev imports</code>.</span></div>
+            <div><code>lev inspect graph</code><span>Render project module imports as text, JSON, or Graphviz DOT.</span></div>
+            <div><code>lev profile</code> / <code>lev inspect performance</code><span>Measure repeated commands directly, or rank project files and compare baselines through the inspector.</span></div>
+            <div><code>lev inspect build</code><span>Run a verbose Lake build and report changed trace inputs.</span></div>
+            <div><code>lev doctor</code> / <code>lev inspect environment</code><span>Check local tools, paths, project files, caches, and workspace state without creating cache state or walking build trees.</span></div>
+            <div><code>lev inspect dependencies</code><span>Explain each selected revision from requests in materialized parent manifests.</span></div>
+            <div><code>lev inspect declaration</code><span>Find a declaration's module, source range, import, and Lean-checked type.</span></div>
+            <div><code>lev inspect trust</code><span>Report project declarations that reach axioms or are marked unsafe.</span></div>
+            <div><code>lev verify</code> / <code>lev check</code><span>Run the fixed published phases, or add configured tasks and project policy.</span></div>
+            <div><code>lev project bundle</code><span>Create a deterministic archive of locked project sources.</span></div>
+            <div><code>lev project publish</code><span>Verify and upload Lake artifacts to an existing GitHub release.</span></div>
             <div><code>lev cache</code><span>Inspect, verify, transfer, and clean shared state.</span></div>
             <div><code>lev workspace</code><span>List, lock, sync, build, run, or shake configured Lake roots.</span></div>
           </div>
-          <p>Detailed guides cover <a href="imports.html#commands">transactional import minimization</a>, <a href="profiling.html#layers">the three profiling layers</a>, <a href="automation.html#verify">verification</a>, and <a href="environments.html#cache-ops">cache operations</a>.</p>
+          <p><code>lev inspect build</code> reports observed changes around a real Lake build. Its reverse-import analysis describes potential source impact, not a claim about Lake's full internal job DAG.</p>
         </section>
 
         <section id="recipes"><h2>Common recipes</h2>
-          <div class="table-wrap"><table><thead><tr><th>Need</th><th>Command</th></tr></thead><tbody>
-            <tr><th>Reproduce CI without network</th><td><code>lev sync --frozen --offline</code></td></tr>
-            <tr><th>See where one build spent time</th><td><code>lev --timings build</code></td></tr>
-            <tr><th>Compare five warm builds</th><td><code>lev profile --warmup 1 --repeat 5</code></td></tr>
-            <tr><th>Check import drift</th><td><code>lev imports --check --keep-public --keep-implied</code></td></tr>
-            <tr><th>Render external import graph</th><td><code>lev graph My.Main --external --format dot -o imports.dot</code></td></tr>
-            <tr><th>Run the release gate</th><td><code>lev verify --clean --offline --strict --test --lint --imports</code></td></tr>
-            <tr><th>Preview all direct updates</th><td><code>lev upgrade --dry-run</code></td></tr>
-            <tr><th>Build every workspace member</th><td><code>lev workspace build --keep-going</code></td></tr>
-            <tr><th>Archive verified source</th><td><code>lev bundle -o project.lev.tar.zst</code></td></tr>
-            <tr><th>Explain a failed build layer</th><td><code>lev -v --timings build</code></td></tr>
-            <tr><th>Recover intentional lock drift</th><td><code>lev lock &amp;&amp; lev lock --check</code></td></tr>
-            <tr><th>Keep valid import edits from a failed batch</th><td><code>lev imports --fix --isolate --keep-public --keep-implied</code></td></tr>
-            <tr><th>Inspect before deleting cache entries</th><td><code>lev cache gc --max-age-days 30</code></td></tr>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Need</th><th scope="col">Command</th></tr></thead><tbody>
+            <tr><th scope="row">Reproduce CI without network</th><td><code>lev sync --frozen --offline</code></td></tr>
+            <tr><th scope="row">See where one build spent time</th><td><code>lev --timings build</code></td></tr>
+            <tr><th scope="row">Compare five warm builds</th><td><code>lev profile --warmup 1 --repeat 5</code></td></tr>
+            <tr><th scope="row">Preserve current public imports</th><td><code>lev shake --check --keep-public --keep-implied</code></td></tr>
+            <tr><th scope="row">Apply Mathlib-style import policy</th><td><code>lev shake --fix --add-public --keep-implied --keep-prefix</code></td></tr>
+            <tr><th scope="row">Render an external import graph</th><td><code>lev inspect graph My.Main --external --format dot -o imports.dot</code></td></tr>
+            <tr><th scope="row">Explain transitive revision choices</th><td><code>lev inspect dependencies</code></td></tr>
+            <tr><th scope="row">Check the selected local environment</th><td><code>lev doctor</code></td></tr>
+            <tr><th scope="row">Run the fixed release gate</th><td><code>lev verify --clean --offline --strict --test --lint --imports</code></td></tr>
+            <tr><th scope="row">Preview direct dependency updates</th><td><code>lev deps upgrade --dry-run</code></td></tr>
+            <tr><th scope="row">Build every workspace member</th><td><code>lev workspace build --keep-going</code></td></tr>
+            <tr><th scope="row">Archive verified source</th><td><code>lev project bundle -o project.lev.tar.zst</code></td></tr>
+            <tr><th scope="row">Explain a failed build layer</th><td><code>lev -v --timings build</code></td></tr>
+            <tr><th scope="row">Recover intentional lock drift</th><td><code>lev lock &amp;&amp; lev lock --check</code></td></tr>
+            <tr><th scope="row">Keep valid import edits from a failed batch</th><td><code>lev shake --fix --isolate --keep-public --keep-implied</code></td></tr>
           </tbody></table></div>
         </section>
 
-        <section id="json"><h2>JSON contracts</h2>
-          <p>Machine-readable commands use one outer shape: <code>{ "schema": "...", "data": ... }</code>. The schema identifier is versioned so consumers can fail clearly when a contract changes.</p>
-          <div class="table-wrap"><table><thead><tr><th>Command</th><th>Schema</th></tr></thead><tbody>
-            <tr><th><code>profile --json</code></th><td><code>lev.cli.profile/v1</code></td></tr>
-            <tr><th><code>graph --format json</code></th><td><code>lev.cli.graph/v1</code></td></tr>
-            <tr><th><code>verify --json</code></th><td><code>lev.cli.verify/v1</code></td></tr>
-            <tr><th><code>shake --json</code></th><td><code>lev.cli.shake/v1</code></td></tr>
-            <tr><th><code>workspace list --json</code></th><td><code>lev.cli.workspace.list/v1</code></td></tr>
-            <tr><th><code>workspace shake --json</code></th><td><code>lev.cli.workspace.shake/v1</code></td></tr>
-            <tr><th><code>outdated --json</code></th><td><code>lev.cli.outdated/v1</code></td></tr>
-            <tr><th><code>audit --json</code></th><td><code>lev.cli.audit/v1</code></td></tr>
-            <tr><th><code>deps --json</code></th><td><code>lev.cli.deps/v1</code></td></tr>
-            <tr><th><code>tree --json</code></th><td><code>lev.cli.tree/v1</code></td></tr>
-            <tr><th><code>why --json</code></th><td><code>lev.cli.why/v1</code></td></tr>
-            <tr><th><code>cache artifacts status --json</code></th><td><code>lev.cli.cache.artifacts.status/v1</code></td></tr>
-            <tr><th><code>cache artifacts verify --json</code></th><td><code>lev.cli.cache.artifacts.verify/v1</code></td></tr>
-            <tr><th><code>cache artifacts gc --json</code></th><td><code>lev.cli.cache.artifacts.gc/v1</code></td></tr>
-            <tr><th><code>cache remote push --json</code></th><td><code>lev.cli.cache.remote.push/v1</code></td></tr>
-            <tr><th><code>cache remote pull --json</code></th><td><code>lev.cli.cache.remote.pull/v1</code></td></tr>
-            <tr><th><code>toolchain chunks publish --json</code></th><td><code>lev.cli.toolchain.chunks.publish/v1</code></td></tr>
-            <tr><th><code>toolchain chunks install --json</code></th><td><code>lev.cli.toolchain.chunks.install/v1</code></td></tr>
-            <tr><th><code>toolchain index build --json</code></th><td><code>lev.cli.toolchain.index.build/v1</code></td></tr>
-            <tr><th><code>toolchain index list --json</code></th><td><code>lev.cli.toolchain.index.list/v1</code></td></tr>
-            <tr><th><code>toolchain index verify --json</code></th><td><code>lev.cli.toolchain.index.verify/v1</code></td></tr>
-            <tr><th><code>toolchain gc --json</code></th><td><code>lev.cli.toolchain.gc/v1</code></td></tr>
-            <tr><th><code>tool list --json</code></th><td><code>lev.cli.tool.list/v1</code></td></tr>
-            <tr><th><code>tool gc --json</code></th><td><code>lev.cli.tool.gc/v1</code></td></tr>
-          </tbody></table></div>
-          <p><code>workspace build</code>, <code>workspace run</code>, <code>workspace sync</code>, and <code>workspace lock</code> do not have aggregate JSON output. Use their exit status and text diagnostics, or choose <code>workspace shake --json</code> when the operation is import analysis.</p>
-          <aside class="note"><strong>Diagnostics stay separate.</strong> Commands that emit JSON route delegated output and progress away from stdout so stdout remains one complete JSON document.</aside>
-        </section>
-
-        <section id="exit"><h2>Exit behavior</h2>
+        <section id="contracts"><h2>Contracts and diagnostics</h2>
           <ul>
-            <li>Successful commands return 0.</li>
-            <li>Delegated process failures preserve the child's exit code where applicable.</li>
-            <li><code>graph</code> returns 1 when it finds an import cycle.</li>
-            <li><code>outdated --check</code> returns 1 when a compatible update exists.</li>
-            <li><code>shake --check</code> returns nonzero when imports can be minimized or validation fails.</li>
-            <li><code>profile</code> stops on the first failed warmup or sample and returns that command's code.</li>
-            <li>Workspace operations stop at the first failure unless <code>--keep-going</code> is set; the first failure code is retained.</li>
+            <li><a href="contracts.html#shape">JSON contracts</a> documents the outer envelope and the relationship between grouped and direct commands.</li>
+            <li><a href="schema-inventory.html">Schema inventory</a> lists every documented schema string by command family.</li>
+            <li><a href="diagnostics.html#exit">Diagnostics and exits</a> distinguishes observational commands, policy failures, and preserved child exit codes.</li>
+            <li><a href="diagnostics.html#troubleshooting">Troubleshooting</a> maps common symptoms to a focused follow-up command.</li>
+            <li><a href="diagnostics.html#agents">Agent guidance</a> links the repository skill and its operating assumptions.</li>
           </ul>
         </section>
 
-        <section id="troubleshooting"><h2>Troubleshooting</h2>
-          <div class="table-wrap"><table><thead><tr><th>Symptom</th><th>Likely cause</th><th>First command</th></tr></thead><tbody>
-            <tr><th>“No Lake project found”</th><td>The current directory is outside any Lake root.</td><td><code>lev --project PATH …</code> or <code>cd</code> into the project.</td></tr>
-            <tr><th>Lock drift reported in CI</th><td>A Lakefile, toolchain, or manifest change was committed without <code>lev lock</code>.</td><td><code>lev lock --check</code> locally, then <code>lev lock</code> if the change was intended.</td></tr>
-            <tr><th>Offline run fails</th><td>A required toolchain or dependency object is not local yet.</td><td><code>lev sync</code> once with network access, then retry <code>--offline</code>.</td></tr>
-            <tr><th>Toolchain cannot be resolved</th><td>A channel or alias needs resolution and no elan fallback is available.</td><td><code>lev doctor</code>, then <code>lev toolchain install SELECTOR</code>.</td></tr>
-            <tr><th>Builds slow on shared storage</th><td>Project and <code>.lake</code> writes are landing on a networked filesystem.</td><td><code>LEV_CACHE_DIR=…/scratch lev --local build</code></td></tr>
-            <tr><th>Unexpected cache size</th><td>Old artifacts accumulated across toolchains and projects.</td><td><code>lev cache status</code>, then <code>lev cache gc --max-age-days N</code> before <code>--apply</code>.</td></tr>
-            <tr><th>Suspected cache corruption</th><td>Interrupted writes or external modification of store contents.</td><td><code>lev cache verify</code>; failing entries are rebuilt from source on the next build.</td></tr>
-          </tbody></table></div>
-          <p>When a delegated Lake or Lean error is the problem, re-run with <code>-v</code> to separate lev's orchestration decisions from the child command's own output before filing an issue against either tool.</p>
-        </section>
-
-        <section id="agents"><h2>Use lev with a coding agent</h2>
-          <p>The repository includes a project skill covering environment reproduction, dependency changes, import minimization, Lean source quality, and worktree safety.</p>
-          <div class="command-block"><div class="command-label">Agent instruction</div><pre><code class="language-plaintext">Read .agents/skills/lev/SKILL.md before working on this Lean project.</code></pre></div>
-          <p>Agents that support skill discovery can load it directly. For other tools it remains ordinary, reviewable project documentation.</p>
-        </section>
-
-        <nav class="page-nav" aria-label="Previous and next pages"><a href="automation.html"><small>Previous</small><strong>Automation</strong></a><a href="index.html"><small>Back to</small><strong>Overview</strong></a></nav>
-        <footer class="site-footer"><p>Exact flags evolve. Pair this map with <code>lev &lt;command&gt; --help</code> from the installed binary.</p></footer>
-      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#help">Help and globals</a><a href="#env-vars">Environment variables</a><a href="#project">Project lifecycle</a><a href="#execution">Execution</a><a href="#dependencies">Dependencies</a><a href="#analysis">Analysis</a><a href="#recipes">Recipes</a><a href="#json">JSON contracts</a><a href="#exit">Exit behavior</a><a href="#troubleshooting">Troubleshooting</a><a href="#agents">Coding agents</a></nav></div></main>
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="automation.html"><small>Previous</small><strong>Automation</strong></a><a href="contracts.html"><small>Next</small><strong>JSON contracts</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#start-here">Common tasks</a><a href="#help">Help and shortcuts</a><a href="#env-vars">Environment variables</a><a href="#project">Project lifecycle</a><a href="#execution">Execution</a><a href="#dependencies">Dependencies</a><a href="#analysis">Analysis</a><a href="#recipes">Recipes</a><a href="#contracts">Contracts</a></nav></div></main>
     </div>
   </body>
 </html>

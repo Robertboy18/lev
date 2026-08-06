@@ -7,20 +7,18 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
 use crate::cache::registry;
 use crate::cli::{
-    AuditArgs, DepsArgs, ExportArgs, InitArgs, LockArgs, ProjectExportFormat, PublishArgs,
+    AuditArgs, DepsListArgs, ExportArgs, InitArgs, LockArgs, ProjectExportFormat, PublishArgs,
     SyncArgs, TreeArgs, UseArgs, WhyArgs,
 };
 use crate::core::json_output::{self, schema};
-use crate::core::process::{checked_output, checked_status, output_text};
+use crate::core::process::checked_status;
 use crate::dependency::graph::DependencyGraph;
 use crate::project::audit::{self as project_audit, AuditLevel};
-use crate::project::config::LevConfig;
 use crate::project::export::{self as project_export, ExportFormat};
 use crate::project::lockfile;
 use crate::project::manifest::LakeManifest;
@@ -291,7 +289,7 @@ pub(super) fn audit_project(context: &AppContext, args: AuditArgs) -> Result<i32
 pub(super) fn publish(context: &AppContext, args: PublishArgs) -> Result<i32> {
     if context.local {
         bail!(
-            "`lev publish` requires the real Git worktree; remove --local for release publication"
+            "`lev project publish` requires the real Git worktree; remove --local for release publication"
         );
     }
     let source = context.project()?;
@@ -315,7 +313,7 @@ pub(super) fn publish(context: &AppContext, args: PublishArgs) -> Result<i32> {
     let audit = project_audit::AuditReport::inspect(&source, &context.git, true);
     if audit.exit_code(!args.allow_nonportable) != 0 {
         bail!(
-            "release audit failed ({} error{}, {} warning{}); run `lev audit --strict` for details{}",
+            "release audit failed ({} error{}, {} warning{}); run `lev project audit --strict` for details{}",
             audit.summary.errors,
             if audit.summary.errors == 1 { "" } else { "s" },
             audit.summary.warnings,
@@ -360,7 +358,7 @@ pub(super) fn publish(context: &AppContext, args: PublishArgs) -> Result<i32> {
 }
 
 /// Display Lake's locked package inventory in stable text or raw JSON.
-pub(super) fn dependencies(context: &AppContext, args: DepsArgs) -> Result<i32> {
+pub(super) fn dependencies(context: &AppContext, args: DepsListArgs) -> Result<i32> {
     let project = context.project()?;
     let manifest = LakeManifest::read(&project.manifest_path())?;
     if args.json {
@@ -426,73 +424,4 @@ pub(super) fn why_dependency(context: &AppContext, args: WhyArgs) -> Result<i32>
         println!("{}", path.join(" -> "));
     }
     Ok(0)
-}
-
-/// Print the executable, project, toolchain, cache, and configuration context.
-pub(super) fn doctor(context: &AppContext) -> Result<i32> {
-    println!("lev cache: {}", context.cache.root.display());
-    print_version(&context.git, &["--version"], "Git")?;
-    match print_version(&context.elan, &["--version"], "elan") {
-        Ok(()) => {}
-        Err(_) => println!("elan: not installed (optional for lev-managed toolchains)"),
-    }
-
-    match context.project() {
-        Ok(project) => {
-            println!("project: {}", project.root.display());
-            println!("toolchain: {}", project.toolchain);
-            if let Some(stored) = context.store.find(&project.toolchain)? {
-                println!("runtime: lev store ({})", stored.view.display());
-            } else {
-                println!("runtime: elan");
-            }
-
-            let mut lean =
-                context.runtime_command(&project.toolchain, OsStr::new("lean"), false)?;
-            lean.arg("--version");
-            print_command_version(&mut lean, "Lean")?;
-
-            let mut lake =
-                context.runtime_command(&project.toolchain, OsStr::new("lake"), false)?;
-            lake.arg("--version");
-            print_command_version(&mut lake, "Lake")?;
-
-            println!(
-                "Lake artifact cache: {}",
-                context.cache.lake_dir(&project.toolchain).display()
-            );
-            let config = LevConfig::read(&project.root)?;
-            println!(
-                "lev config: {}",
-                config.path.as_deref().map_or_else(
-                    || "not configured".to_owned(),
-                    |path| path.display().to_string()
-                )
-            );
-            println!("configured tasks: {}", config.tasks.len());
-            println!(
-                "configured matrix toolchains: {}",
-                config.matrix_toolchains.len()
-            );
-        }
-        Err(_) => {
-            println!(
-                "project: none found from {}",
-                context.project_start.display()
-            );
-        }
-    }
-    Ok(0)
-}
-
-fn print_version(program: &OsStr, args: &[&str], label: &str) -> Result<()> {
-    let mut command = Command::new(program);
-    command.args(args);
-    print_command_version(&mut command, label)
-}
-
-fn print_command_version(command: &mut Command, label: &str) -> Result<()> {
-    let output = output_text(checked_output(command)?);
-    println!("{label}: {output}");
-    Ok(())
 }

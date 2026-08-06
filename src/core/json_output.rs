@@ -14,8 +14,16 @@ pub(crate) mod schema {
     pub const DEPS: &str = "lev.cli.deps/v1";
     pub const SHAKE: &str = "lev.cli.shake/v1";
     pub const PROFILE: &str = "lev.cli.profile/v1";
+    pub const INSPECT: &str = "lev.cli.inspect/v1";
+    pub const INSPECT_ENVIRONMENT: &str = "lev.cli.inspect.environment/v1";
+    pub const INSPECT_PERFORMANCE: &str = "lev.cli.inspect.performance/v1";
+    pub const CHECK: &str = "lev.cli.check/v1";
     pub const GRAPH: &str = "lev.cli.graph/v1";
     pub const VERIFY: &str = "lev.cli.verify/v1";
+    pub const INSPECT_BUILD: &str = "lev.cli.inspect.build/v1";
+    pub const INSPECT_DEPENDENCIES: &str = "lev.cli.inspect.dependencies/v1";
+    pub const INSPECT_DECLARATION: &str = "lev.cli.inspect.declaration/v1";
+    pub const INSPECT_TRUST: &str = "lev.cli.inspect.trust/v1";
     pub const TREE: &str = "lev.cli.tree/v1";
     pub const WHY: &str = "lev.cli.why/v1";
     pub const WORKSPACE_LIST: &str = "lev.cli.workspace.list/v1";
@@ -42,8 +50,16 @@ pub(crate) mod schema {
         DEPS,
         SHAKE,
         PROFILE,
+        INSPECT,
+        INSPECT_ENVIRONMENT,
+        INSPECT_PERFORMANCE,
+        CHECK,
         GRAPH,
         VERIFY,
+        INSPECT_BUILD,
+        INSPECT_DEPENDENCIES,
+        INSPECT_DECLARATION,
+        INSPECT_TRUST,
         TREE,
         WHY,
         WORKSPACE_LIST,

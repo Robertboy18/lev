@@ -11,7 +11,9 @@ use anyhow::{Context, Result};
 
 use crate::cache::lake_artifacts as lake_artifact_cache;
 use crate::cache::registry;
-use crate::cli::{BuildArgs, CheckArgs, LakeArgs, RunArgs, SyncArgs, TaskArgs, WorkflowArgs};
+use crate::cli::{
+    BuildArgs, CheckArgs, ExecutionArgs, LakeArgs, RunArgs, SyncArgs, TaskArgs, WorkflowArgs,
+};
 use crate::core::process::{exit_code, passthrough_status};
 use crate::dependency::environment as dependency_env;
 use crate::project::Project;
@@ -97,34 +99,39 @@ pub(super) fn lake_command(
 }
 
 /// Elaborate one Lean file with Lake's package environment.
-pub(super) fn check(context: &AppContext, args: CheckArgs) -> Result<i32> {
+pub(super) fn check_file(context: &AppContext, args: CheckArgs) -> Result<i32> {
     let source = context.project()?;
+    let file = args
+        .file
+        .context("`--file PATH` is required for file checking")?;
+    let execution = ExecutionArgs {
+        lean: args.lean,
+        no_sync: args.no_sync,
+        offline: args.offline,
+    };
     let project = prepared_project(
         context,
         &source,
-        args.execution.lean.as_deref(),
-        args.execution.no_sync,
-        args.execution.offline,
+        execution.lean.as_deref(),
+        execution.no_sync,
+        execution.offline,
     )?;
-    let file = if project.root != source.root
-        && args.file.is_absolute()
-        && args.file.starts_with(&source.root)
-    {
-        project.root.join(
-            args.file
-                .strip_prefix(&source.root)
-                .context("failed to map Lean file into local workspace")?,
-        )
-    } else {
-        args.file
-    };
+    let file =
+        if project.root != source.root && file.is_absolute() && file.starts_with(&source.root) {
+            project.root.join(
+                file.strip_prefix(&source.root)
+                    .context("failed to map Lean file into local workspace")?,
+            )
+        } else {
+            file
+        };
     let mut command = vec![
         OsString::from("lake"),
         OsString::from("lean"),
         file.into_os_string(),
     ];
     command.extend(args.args);
-    run_in_project(context, &project, &command, !args.execution.offline)
+    run_in_project(context, &project, &command, !execution.offline)
 }
 
 /// List or run one configured project task.
