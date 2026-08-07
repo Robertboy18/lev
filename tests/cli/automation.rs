@@ -453,6 +453,47 @@ fn file_profiles_validate_baselines_and_suppress_partial_comparisons() {
     assert!(interrupted["baseline"].is_null());
 }
 
+#[cfg(unix)]
+#[test]
+fn file_profiles_include_symlinked_lean_sources() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new();
+    write_empty_project(&fixture.project, "root");
+    fs::write(fixture.project.join("Root.lean"), "def root := 1\n").unwrap();
+    symlink("Root.lean", fixture.project.join("Alias.lean")).unwrap();
+    let outside = fixture.root.join("Outside.lean");
+    fs::write(&outside, "def outside := 2\n").unwrap();
+    symlink(&outside, fixture.project.join("External.lean")).unwrap();
+    fs::create_dir(fixture.project.join("NotAFile")).unwrap();
+    symlink("NotAFile", fixture.project.join("Directory.lean")).unwrap();
+
+    let profiled = fixture
+        .lev()
+        .args([
+            "inspect",
+            "performance",
+            "--files",
+            "--no-sync",
+            "--offline",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_ref(&profiled);
+    let profiled = json_data(&profiled, "lev.cli.inspect.performance/v1");
+    let paths = profiled["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"Alias.lean"), "{paths:?}");
+    assert!(paths.contains(&"Root.lean"), "{paths:?}");
+    assert!(!paths.contains(&"External.lean"), "{paths:?}");
+    assert!(!paths.contains(&"Directory.lean"), "{paths:?}");
+}
+
 #[test]
 fn bundle_is_deterministic_and_excludes_generated_trees() {
     let fixture = Fixture::new();

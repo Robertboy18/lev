@@ -478,9 +478,10 @@ mod tests {
             target.command,
             Command::Check(super::CheckArgs {
                 file: None,
+                first_arg: Some(first_arg),
                 tasks,
                 ..
-            }) if tasks == ["test"]
+            }) if first_arg == "MyLibrary" && tasks == ["test"]
         ));
 
         let legacy =
@@ -492,6 +493,29 @@ mod tests {
                 no_sync: true,
                 ..
             })
+        ));
+
+        let legacy_with_lean_flag =
+            Cli::try_parse_from(["lev", "check", "Root.lean", "-Dpp.universes=true"]).unwrap();
+        assert!(matches!(
+            legacy_with_lean_flag.command,
+            Command::Check(super::CheckArgs {
+                first_arg: Some(first_arg),
+                args,
+                ..
+            }) if first_arg == "Root.lean" && args == ["-Dpp.universes=true"]
+        ));
+
+        let explicit_with_lean_flag =
+            Cli::try_parse_from(["lev", "check", "--file", "Root.lean", "-Dpp.universes=true"])
+                .unwrap();
+        assert!(matches!(
+            explicit_with_lean_flag.command,
+            Command::Check(super::CheckArgs {
+                file: Some(_),
+                first_arg: Some(first_arg),
+                ..
+            }) if first_arg == "-Dpp.universes=true"
         ));
     }
 }

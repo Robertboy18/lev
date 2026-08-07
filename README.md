@@ -18,8 +18,8 @@ proof checking.
 
 ## Install
 
-`lev` is published as the Cargo package `lev-cli` and installs the `lev`
-binary:
+The Cargo package is named `lev-cli` and installs the `lev` binary. Install it
+from the repository:
 
 ```console
 cargo install --git https://github.com/Robertboy18/lev --locked lev-cli
@@ -31,25 +31,33 @@ Install [Rust](https://rustup.rs/) first if `cargo` is not already available.
 
 ## First session
 
-If I have just cloned a Lean project and want one build I can trust, this is
-the pass I run:
+If I have just cloned a Lean project, I start with the commands that work
+whether or not the project already uses lev:
 
 ```console
 cd my-lean-project
 lev inspect
 lev doctor
-lev lock --check
-lev sync --frozen
+lev sync
 lev build
-lev verify --offline --test
 ```
 
-That answers the basic questions in the right order:
+That answers the basic questions in order:
 
 - Did `lev` discover the project I meant?
 - Can this machine run the selected Lean and Lake?
-- Does the recorded lock still match the project files?
-- Can the checkout build without quietly changing its environment?
+- Can lev prepare the environment and hand the build to Lake?
+
+For a repository that already commits `lev.lock`, use the stricter path:
+
+```console
+lev lock --check
+lev sync --frozen
+lev verify --offline
+```
+
+Add `--test` or `--lint` only when the project defines the corresponding Lake
+drivers.
 
 There is no activation step. Each `lev` command discovers the nearest Lake
 project, selects the requested environment, and then delegates to Lake or Lean.

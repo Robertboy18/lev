@@ -6,13 +6,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use toml_edit::DocumentMut;
 
+use crate::core::bounded_io;
 use crate::project::manifest::{LakeManifest, package_directory_name};
 use crate::project::{Project, import_graph};
 
 const MAX_INDEX_FILES: usize = 250_000;
+const MAX_INDEX_ENTRIES: usize = 500_000;
 const MAX_INDEX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const MAX_LAKEFILE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_SOURCE_DIRECTORIES: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct DeclarationCandidate {
@@ -144,7 +149,7 @@ pub fn project_declarations(project: &Project) -> Result<DeclarationInventory> {
 
 struct SearchRoot {
     package: String,
-    source: PathBuf,
+    source_directories: Vec<PathBuf>,
     index: PathBuf,
 }
 
@@ -155,7 +160,7 @@ fn search_roots(project: &Project) -> Result<Vec<SearchRoot>> {
             .name
             .clone()
             .unwrap_or_else(|| "project".to_owned()),
-        source: project.root.clone(),
+        source_directories: source_directories(&project.root),
         index: declaration_index_path(&project.root),
     }];
     let packages_path = manifest.packages_path(&project.root)?;
@@ -176,7 +181,7 @@ fn search_roots(project: &Project) -> Result<Vec<SearchRoot>> {
         roots.push(SearchRoot {
             package: package.name,
             index: declaration_index_path(&source),
-            source,
+            source_directories: source_directories(&source),
         });
     }
 
@@ -194,8 +199,82 @@ fn declaration_index_path(source: &Path) -> PathBuf {
     }
 }
 
+fn source_directories(source: &Path) -> Vec<PathBuf> {
+    match source.join("lakefile.lean").try_exists() {
+        Ok(false) => {}
+        Ok(true) | Err(_) => return Vec::new(),
+    }
+    let lakefile = source.join("lakefile.toml");
+    match fs::metadata(&lakefile) {
+        Ok(metadata) => {
+            if !metadata.is_file() || metadata.len() > MAX_LAKEFILE_BYTES {
+                return Vec::new();
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return [source.to_owned(), source.join("src")]
+                .into_iter()
+                .collect();
+        }
+        Err(_) => return Vec::new(),
+    }
+    let Ok(contents) = bounded_io::read_file(&lakefile, MAX_LAKEFILE_BYTES) else {
+        return Vec::new();
+    };
+    let Ok(contents) = std::str::from_utf8(&contents) else {
+        return Vec::new();
+    };
+    let Ok(document) = contents.parse::<DocumentMut>() else {
+        return Vec::new();
+    };
+    let Some(package_directory) = optional_string(&document, "srcDir") else {
+        return Vec::new();
+    };
+    let package_directory = package_directory.unwrap_or(".");
+    let mut directories = BTreeSet::new();
+    let mut target_count = 0_usize;
+
+    for target_kind in ["lean_lib", "lean_exe"] {
+        let Some(target_item) = document.get(target_kind) else {
+            continue;
+        };
+        let Some(targets) = target_item.as_array_of_tables() else {
+            return Vec::new();
+        };
+        for target in targets.iter().take(MAX_SOURCE_DIRECTORIES + 1) {
+            target_count += 1;
+            if target_count > MAX_SOURCE_DIRECTORIES {
+                return Vec::new();
+            }
+            let target_directory = match target.get("srcDir") {
+                Some(item) => {
+                    let Some(directory) = item.as_str() else {
+                        return Vec::new();
+                    };
+                    directory
+                }
+                None => ".",
+            };
+            directories.insert(source.join(package_directory).join(target_directory));
+        }
+    }
+
+    if target_count == 0 {
+        directories.insert(source.join(package_directory));
+    }
+    directories.into_iter().collect()
+}
+
+fn optional_string<'a>(document: &'a DocumentMut, key: &str) -> Option<Option<&'a str>> {
+    match document.get(key) {
+        Some(item) => item.as_str().map(Some),
+        None => Some(None),
+    }
+}
+
 #[derive(Debug, Default)]
 struct IndexBudget {
+    entries: usize,
     files: usize,
     total_bytes: u64,
     stopped: bool,
@@ -214,10 +293,22 @@ where
     if budget.stopped {
         return Ok(());
     }
-    let mut entries = fs::read_dir(directory)
-        .with_context(|| format!("failed to read declaration index {}", directory.display()))?
+    let entries = fs::read_dir(directory)
+        .with_context(|| format!("failed to read declaration index {}", directory.display()))?;
+    let remaining = MAX_INDEX_ENTRIES.saturating_sub(budget.entries);
+    let mut entries = entries
+        .take(remaining.saturating_add(1))
         .collect::<std::io::Result<Vec<_>>>()
         .with_context(|| format!("failed to read declaration index {}", directory.display()))?;
+    if entries.len() > remaining {
+        warnings.push(format!(
+            "stopped after scanning {MAX_INDEX_ENTRIES} declaration-index entries"
+        ));
+        budget.entries = MAX_INDEX_ENTRIES;
+        budget.stopped = true;
+        return Ok(());
+    }
+    budget.entries += entries.len();
     entries.sort_by_key(|entry| entry.file_name());
 
     for entry in entries {
@@ -383,8 +474,13 @@ fn parse_range(values: &[serde_json::Value]) -> Option<DeclarationRange> {
 
 fn source_path(root: &SearchRoot, index_path: &Path) -> Option<PathBuf> {
     let relative = index_path.strip_prefix(&root.index).ok()?;
-    let candidate = root.source.join(relative).with_extension("lean");
-    candidate.is_file().then_some(candidate)
+    let mut matches = root
+        .source_directories
+        .iter()
+        .map(|directory| directory.join(relative).with_extension("lean"))
+        .filter(|candidate| candidate.is_file());
+    let candidate = matches.next()?;
+    matches.next().is_none().then_some(candidate)
 }
 
 fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
@@ -396,9 +492,15 @@ fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+    use std::fs;
+
     use serde_json::json;
 
-    use super::{constant_name, parse_range};
+    use super::{
+        IndexBudget, MAX_LAKEFILE_BYTES, MAX_SOURCE_DIRECTORIES, SearchRoot, constant_name,
+        parse_range, source_directories, source_path, visit_index_files,
+    };
 
     #[test]
     fn reads_constant_reference_keys_and_one_based_ranges() {
@@ -443,5 +545,204 @@ mod tests {
             assert_eq!(range.end_line, 1);
             assert_eq!(range.end_column, 16);
         }
+    }
+
+    #[test]
+    fn finds_sources_in_a_src_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("package");
+        let index = source.join(".lake/build/lib/lean");
+        let index_path = index.join("Demo/Basic.ilean");
+        let source_path_expected = source.join("src/Demo/Basic.lean");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("lakefile.toml"),
+            "name = \"demo\"\n\n[[lean_lib]]\nname = \"Demo\"\nsrcDir = \"src\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(source_path_expected.parent().unwrap()).unwrap();
+        fs::write(&source_path_expected, "def demo := 1\n").unwrap();
+
+        let root = SearchRoot {
+            package: "demo".to_owned(),
+            source_directories: source_directories(&source),
+            index,
+        };
+        assert_eq!(source_path(&root, &index_path), Some(source_path_expected));
+    }
+
+    #[test]
+    fn finds_sources_in_a_custom_lake_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("package");
+        let index = source.join(".lake/build/lib/lean");
+        let index_path = index.join("Demo/Basic.ilean");
+        let source_path_expected = source.join("lib/Demo/Basic.lean");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("lakefile.toml"),
+            "name = \"demo\"\n\n[[lean_lib]]\nname = \"Demo\"\nsrcDir = \"lib\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(source_path_expected.parent().unwrap()).unwrap();
+        fs::write(&source_path_expected, "def demo := 1\n").unwrap();
+        fs::create_dir_all(source.join("Demo")).unwrap();
+        fs::write(source.join("Demo/Basic.lean"), "def unrelated := 2\n").unwrap();
+
+        let root = SearchRoot {
+            package: "demo".to_owned(),
+            source_directories: source_directories(&source),
+            index,
+        };
+        assert_eq!(source_path(&root, &index_path), Some(source_path_expected));
+    }
+
+    #[test]
+    fn composes_package_and_target_source_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("package");
+        let index = source.join(".lake/build/lib/lean");
+        let index_path = index.join("Demo/Basic.ilean");
+        let source_path_expected = source.join("src/lib/Demo/Basic.lean");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("lakefile.toml"),
+            "name = \"demo\"\nsrcDir = \"src\"\n\n[[lean_lib]]\nname = \"Demo\"\nsrcDir = \"lib\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(source_path_expected.parent().unwrap()).unwrap();
+        fs::write(&source_path_expected, "def demo := 1\n").unwrap();
+
+        let root = SearchRoot {
+            package: "demo".to_owned(),
+            source_directories: source_directories(&source),
+            index,
+        };
+        assert_eq!(source_path(&root, &index_path), Some(source_path_expected));
+    }
+
+    #[test]
+    fn refuses_ambiguous_sources_from_multiple_lake_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("package");
+        let index = source.join(".lake/build/lib/lean");
+        let index_path = index.join("Demo/Basic.ilean");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("lakefile.toml"),
+            "name = \"demo\"\n\n[[lean_lib]]\nname = \"One\"\nsrcDir = \"one\"\n\n[[lean_lib]]\nname = \"Two\"\nsrcDir = \"two\"\n",
+        )
+        .unwrap();
+        for directory in ["one", "two"] {
+            let path = source.join(directory).join("Demo/Basic.lean");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "def demo := 1\n").unwrap();
+        }
+
+        let root = SearchRoot {
+            package: "demo".to_owned(),
+            source_directories: source_directories(&source),
+            index,
+        };
+        assert_eq!(source_path(&root, &index_path), None);
+    }
+
+    #[test]
+    fn executable_lakefiles_take_precedence_over_stale_toml() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("package");
+        let index = source.join(".lake/build/lib/lean");
+        let index_path = index.join("Demo/Basic.ilean");
+        let stale_source = source.join("stale/Demo/Basic.lean");
+        fs::create_dir_all(stale_source.parent().unwrap()).unwrap();
+        fs::write(source.join("lakefile.lean"), "import Lake\nopen Lake DSL\n").unwrap();
+        fs::write(
+            source.join("lakefile.toml"),
+            "name = \"stale\"\n\n[[lean_lib]]\nname = \"Demo\"\nsrcDir = \"stale\"\n",
+        )
+        .unwrap();
+        fs::write(&stale_source, "def stale := 1\n").unwrap();
+
+        let root = SearchRoot {
+            package: "demo".to_owned(),
+            source_directories: source_directories(&source),
+            index,
+        };
+        assert_eq!(source_path(&root, &index_path), None);
+    }
+
+    #[test]
+    fn refuses_oversized_lakefiles() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::File::create(temp.path().join("lakefile.toml"))
+            .unwrap()
+            .set_len(MAX_LAKEFILE_BYTES + 1)
+            .unwrap();
+
+        assert!(source_directories(temp.path()).is_empty());
+    }
+
+    #[test]
+    fn does_not_guess_sources_from_malformed_lakefiles() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("lakefile.toml"),
+            "name = \"demo\"\n[[lean_lib]\nname = \"Demo\"\n",
+        )
+        .unwrap();
+
+        assert!(source_directories(temp.path()).is_empty());
+    }
+
+    #[test]
+    fn refuses_more_source_targets_than_the_discovery_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut targets = String::new();
+        for index in 0..=MAX_SOURCE_DIRECTORIES {
+            write!(
+                targets,
+                "\n[[lean_lib]]\nname = \"Target{index}\"\nsrcDir = \"source{index}\"\n"
+            )
+            .unwrap();
+        }
+        fs::write(
+            temp.path().join("lakefile.toml"),
+            format!("name = \"demo\"\n{targets}"),
+        )
+        .unwrap();
+
+        assert!(source_directories(temp.path()).is_empty());
+    }
+
+    #[test]
+    fn visits_declaration_indexes_in_filename_order() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("z.ilean"), b"{}").unwrap();
+        fs::write(temp.path().join("a.ilean"), b"{}").unwrap();
+        let root = SearchRoot {
+            package: "demo".to_owned(),
+            source_directories: vec![temp.path().to_owned()],
+            index: temp.path().to_owned(),
+        };
+        let mut budget = IndexBudget::default();
+        let mut warnings = Vec::new();
+        let mut visited = Vec::new();
+
+        visit_index_files(
+            &root,
+            temp.path(),
+            &mut budget,
+            &mut warnings,
+            &mut |_, path, _, _| visited.push(path.file_name().unwrap().to_owned()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            visited,
+            [
+                std::ffi::OsString::from("a.ilean"),
+                std::ffi::OsString::from("z.ilean")
+            ]
+        );
     }
 }

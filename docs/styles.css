@@ -972,6 +972,54 @@ tbody tr:last-child td {
   min-width: 7px;
 }
 
+.mobile-bar-track > .width-001 {
+  width: 0.01%;
+}
+
+.mobile-bar-track > .width-008 {
+  width: 0.08%;
+}
+
+.mobile-bar-track > .width-12 {
+  width: 12%;
+}
+
+.mobile-bar-track > .width-21 {
+  width: 21%;
+}
+
+.mobile-bar-track > .width-29 {
+  width: 29%;
+}
+
+.mobile-bar-track > .width-3195 {
+  width: 31.95%;
+}
+
+.mobile-bar-track > .width-54 {
+  width: 54%;
+}
+
+.mobile-bar-track > .width-58 {
+  width: 58%;
+}
+
+.mobile-bar-track > .width-64 {
+  width: 64%;
+}
+
+.mobile-bar-track > .width-6792 {
+  width: 67.92%;
+}
+
+.mobile-bar-track > .width-92 {
+  width: 92%;
+}
+
+.mobile-bar-track > .width-100 {
+  width: 100%;
+}
+
 .fill-green,
 .key-green {
   background: #5fa89f;

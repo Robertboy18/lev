@@ -35,6 +35,8 @@ jobs:
         run: cargo doc --locked --no-deps --all-features
       - name: Verify crates.io package
         if: matrix.rust == 'stable'
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/lev-package-target
         run: cargo package --locked
 
   portability:

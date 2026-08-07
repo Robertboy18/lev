@@ -677,8 +677,12 @@ pub struct CheckArgs {
     #[arg(long, conflicts_with = "file")]
     pub json: bool,
 
-    /// Lake build targets, or a legacy positional Lean file and its arguments.
-    #[arg(value_name = "TARGET_OR_FILE")]
+    /// First Lake build target, or a legacy positional Lean file.
+    #[arg(value_name = "TARGET_OR_FILE", allow_hyphen_values = true)]
+    pub first_arg: Option<OsString>,
+
+    /// Additional Lake build targets, or arguments passed to a legacy Lean file.
+    #[arg(value_name = "TARGET_OR_LEAN_ARG", allow_hyphen_values = true)]
     pub args: Vec<OsString>,
 }
 

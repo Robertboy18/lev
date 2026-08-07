@@ -12,7 +12,7 @@
     <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
         <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
         <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
@@ -68,7 +68,7 @@ performance: 2 Lean files, 6 measured executions
               <div class="flow-node"><strong>Compare</strong><span>optional baseline</span></div>
             </div>
           </figure>
-          <p>The source walk skips symlinks, <code>lakefile.lean</code>, and generated or dependency trees including <code>.lake</code>, <code>build</code>, <code>lake-packages</code>, <code>target</code>, and <code>node_modules</code>. The prebuild happens once. <code>--warmup N</code> and <code>--repeat N</code> then apply separately to every file. The text table is sorted by median duration, while JSON retains each sample and its summary.</p>
+          <p>The source walk includes symlinked <code>.lean</code> files but does not recurse into symlinked directories. It skips <code>lakefile.lean</code> and generated or dependency trees including <code>.lake</code>, <code>build</code>, <code>lake-packages</code>, <code>target</code>, and <code>node_modules</code>. The prebuild happens once. <code>--warmup N</code> and <code>--repeat N</code> then apply separately to every file. The text table is sorted by median duration, while JSON retains each sample and its summary.</p>
           <h3>Read the ranking</h3>
           <ul>
             <li>Does the same file stay near the top across repeats, or is the ranking mostly noise?</li>
@@ -90,14 +90,14 @@ slower     +    2.15%       7.027 -&gt;      7.177 ms  Main.lean</code></pre></d
         <section id="lean-profiler"><h2>Trace one file with Lean's profiler</h2>
           <p>When one file or declaration is slow, process timing has done its job. Lean's native profiler can then show nested elaborator and metaprogram work. The most useful modern entry point is <code>trace.profiler</code>.</p>
           <p>The raw tree can repeat semantically meaningful elaboration scopes and bury the first useful timing under several parents. People on Lean Zulip keep running into that shape in practice, and <a href="https://github.com/leanprover/lean4/issues/5019">Lean issue #5019</a> asks for broader diagnostics that would surface expensive tactics and typeclass synthesis across a module. lev handles the coarser project-level measurement first, leaving tactic and elaborator diagnosis to Lean's trace.</p>
-          <p>Learn the trace format on a tiny declaration before opening a real proof. With the threshold at zero, even this definition exposes elaboration, kernel checking, compiler work, attributes, and linters. Once the nesting makes sense, raise the threshold and move to the slow file.</p>
-          <div class="command-block lean-block"><div class="command-label">Tiny source for learning the trace</div><pre><code class="language-lean">/-- some doc string -/
+          <p>Learn the trace format on a tiny declaration before opening a real proof. Save this example as <code>ProfilerExample.lean</code>. With the threshold at zero, it exposes elaboration, kernel checking, compiler work, attributes, and linters. Once the nesting makes sense, raise the threshold and move to the slow file.</p>
+          <div class="command-block lean-block"><div class="command-label">ProfilerExample.lean</div><pre><code class="language-lean">/-- some doc string -/
 @[simp]
 def hello := "world"</code></pre></div>
           <div class="command-block"><div class="command-label">Show every profiler scope</div><pre><code class="language-bash">lev run -- lake env lean \
   -Dtrace.profiler=true \
   -Dtrace.profiler.threshold=0 \
-  LeanFoundations/Logic/Basic.lean</code></pre></div>
+  ProfilerExample.lean</code></pre></div>
           <p><code>trace.profiler.threshold</code> is a filter: nested scopes below the threshold are omitted from the displayed tree. The default threshold in current Lean releases is 10 milliseconds. Lower it to expose more detail, but expect much larger output and some profiler overhead.</p>
           <div class="command-block output-block"><div class="command-label">Lean trace, abridged</div><pre><code class="language-plaintext">[Elab.command] [0.001532] /-- some doc string -/
     @[simp]

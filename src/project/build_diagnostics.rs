@@ -87,17 +87,17 @@ impl Parser {
                 self.push_cause(cause);
                 continue;
             }
-            if let Some(message) = line.strip_prefix("error: ").map(str::trim)
-                && !is_generic_error(message)
-            {
-                self.push_cause(BuildRootCause {
-                    kind: BuildRootCauseKind::LakeError,
-                    target: None,
-                    file: None,
-                    line: None,
-                    column: None,
-                    message: message.to_owned(),
-                });
+            if let Some(message) = line.strip_prefix("error: ").map(str::trim) {
+                if !is_generic_error(message) {
+                    self.push_cause(BuildRootCause {
+                        kind: BuildRootCauseKind::LakeError,
+                        target: None,
+                        file: None,
+                        line: None,
+                        column: None,
+                        message: message.to_owned(),
+                    });
+                }
             }
         }
     }

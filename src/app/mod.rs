@@ -201,6 +201,9 @@ fn inspect_command(context: &AppContext, args: InspectArgs) -> Result<i32> {
 }
 
 fn check_command(context: &AppContext, mut args: crate::cli::CheckArgs) -> Result<i32> {
+    if let Some(first_arg) = args.first_arg.take() {
+        args.args.insert(0, first_arg);
+    }
     if args.file.is_none() && legacy_check_file(context, &args)? {
         args.file = Some(PathBuf::from(args.args.remove(0)));
     }

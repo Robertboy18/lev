@@ -459,40 +459,48 @@ fn run_once(
 fn project_lean_files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let mut entries = 0_usize;
-    visit_project_files(root, root, &mut entries, &mut files)?;
+    let canonical_root =
+        fs::canonicalize(root).with_context(|| format!("failed to resolve {}", root.display()))?;
+    visit_project_files(root, &canonical_root, root, &mut entries, &mut files)?;
     files.sort();
     Ok(files)
 }
 
 fn visit_project_files(
     root: &Path,
+    canonical_root: &Path,
     directory: &Path,
     entries: &mut usize,
     files: &mut Vec<PathBuf>,
 ) -> Result<()> {
-    let mut children = fs::read_dir(directory)
-        .with_context(|| format!("failed to read {}", directory.display()))?
+    let children = fs::read_dir(directory)
+        .with_context(|| format!("failed to read {}", directory.display()))?;
+    let remaining = MAX_PROJECT_ENTRIES.saturating_sub(*entries);
+    let mut children = children
+        .take(remaining.saturating_add(1))
         .collect::<std::io::Result<Vec<_>>>()
         .with_context(|| format!("failed to read {}", directory.display()))?;
-    children.sort_by_key(|entry| entry.file_name());
+    if children.len() > remaining {
+        bail!("stopped after {MAX_PROJECT_ENTRIES} project entries while finding Lean files");
+    }
+    *entries += children.len();
+    children.sort_by_key(|child| child.file_name());
 
     for child in children {
-        *entries += 1;
-        if *entries > MAX_PROJECT_ENTRIES {
-            bail!("stopped after {MAX_PROJECT_ENTRIES} project entries while finding Lean files");
-        }
         let file_type = child
             .file_type()
             .with_context(|| format!("failed to inspect {}", child.path().display()))?;
-        if file_type.is_symlink() {
-            continue;
-        }
         if file_type.is_dir() {
             if ignored_directory(&child.file_name()) {
                 continue;
             }
-            visit_project_files(root, &child.path(), entries, files)?;
-        } else if file_type.is_file()
+            visit_project_files(root, canonical_root, &child.path(), entries, files)?;
+        } else if (file_type.is_file()
+            || (file_type.is_symlink()
+                && child.path().is_file()
+                && fs::canonicalize(child.path())
+                    .with_context(|| format!("failed to resolve {}", child.path().display()))?
+                    .starts_with(canonical_root)))
             && child.path().extension().and_then(|value| value.to_str()) == Some("lean")
             && child.file_name() != "lakefile.lean"
         {

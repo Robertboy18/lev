@@ -1694,7 +1694,15 @@ pub(super) fn build(context: &AppContext, args: InspectBuildArgs) -> Result<i32>
         args.execution.no_sync,
         args.execution.offline,
     )?;
-    let before = TraceSnapshot::capture(&project.root)?;
+    let (before, mut trace_capture_warnings) = match TraceSnapshot::capture(&project.root) {
+        Ok(snapshot) => (Some(snapshot), Vec::new()),
+        Err(error) => (
+            None,
+            vec![format!(
+                "could not capture Lake traces before the build; trace-based causality evidence is unavailable: {error:#}"
+            )],
+        ),
+    };
     let mut command = vec![
         OsString::from("lake"),
         OsString::from("--verbose"),
@@ -1705,25 +1713,26 @@ pub(super) fn build(context: &AppContext, args: InspectBuildArgs) -> Result<i32>
     let started = Instant::now();
     let output = captured_in_project(context, &project, &command, !args.execution.offline)?;
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    let (trace_changes, current_warnings, trace_capture_warning) = match TraceSnapshot::capture(
+    let (trace_changes, current_warnings, trace_capture_succeeded) = match TraceSnapshot::capture(
         &project.root,
     ) {
-        Ok(current) => (before.changes_since(&current), current.warnings, None),
-        Err(error) => (
-            Vec::new(),
-            Vec::new(),
-            Some(format!(
+        Ok(current) => {
+            let changes = before
+                .as_ref()
+                .map_or_else(Vec::new, |before| before.changes_since(&current));
+            (changes, current.warnings, before.is_some())
+        }
+        Err(error) => {
+            trace_capture_warnings.push(format!(
                 "could not capture Lake traces after the build; trace-based causality evidence is unavailable: {error:#}"
-            )),
-        ),
+            ));
+            (Vec::new(), Vec::new(), false)
+        }
     };
-    let trace_capture_succeeded = trace_capture_warning.is_none();
     let events = build_events(&output);
     let diagnostics = build_diagnostics::parse(&output.stdout, &output.stderr);
     let mut causality = build_causality_report(&project, &events, &trace_changes);
-    if let Some(warning) = trace_capture_warning {
-        causality.warnings.push(warning);
-    }
+    causality.warnings.extend(trace_capture_warnings);
     let attributed = trace_changes
         .iter()
         .filter_map(|change| change.target.as_deref())
@@ -1742,7 +1751,8 @@ pub(super) fn build(context: &AppContext, args: InspectBuildArgs) -> Result<i32>
     };
     let code = exit_code(output.status);
     let warnings = before
-        .warnings
+        .map(|snapshot| snapshot.warnings)
+        .unwrap_or_default()
         .into_iter()
         .chain(current_warnings)
         .chain(causality.warnings.iter().cloned())
@@ -2256,7 +2266,12 @@ fn build_events(output: &Output) -> Vec<BuildEvent> {
 }
 
 fn parse_build_event(line: &str) -> Option<BuildEvent> {
-    let (_, detail) = line.trim().split_once("] ")?;
+    let (prefix, detail) = line.trim().split_once("] ")?;
+    let progress = prefix.rsplit_once('[')?.1;
+    let (completed, total) = progress.split_once('/')?;
+    if completed.parse::<u64>().is_err() || total.parse::<u64>().is_err() {
+        return None;
+    }
     let (action, detail) = detail.split_once(' ')?;
     let action = match action {
         "Built" => BuildEventAction::Built,
@@ -2606,7 +2621,8 @@ fn check_declaration_type(
                 project.root.display()
             )
         })?;
-    writeln!(scratch, "import {module}\n#check {name}")
+    let checked_name = format!("@{name}");
+    writeln!(scratch, "import {module}\n#check {checked_name}")
         .context("failed to write temporary Lean inspection file")?;
     scratch
         .as_file_mut()
@@ -2627,7 +2643,7 @@ fn check_declaration_type(
             exit_code(output.status)
         );
     }
-    parse_checked_type(&output.stdout).with_context(|| {
+    parse_checked_type(&output.stdout, name).with_context(|| {
         format!(
             "Lean checked {name}, but its structured output did not contain the declaration type"
         )
@@ -2640,18 +2656,69 @@ struct LeanMessage {
     data: serde_json::Value,
 }
 
-fn parse_checked_type(bytes: &[u8]) -> Option<String> {
+fn parse_checked_type(bytes: &[u8], name: &str) -> Option<String> {
     String::from_utf8_lossy(bytes)
         .lines()
         .filter_map(|line| serde_json::from_str::<LeanMessage>(line).ok())
         .filter(|message| message.severity.as_deref() == Some("information"))
-        .filter_map(|message| message.data.as_str().map(str::to_owned))
         .filter_map(|message| {
             message
-                .split_once(" : ")
-                .map(|(_, type_)| type_.trim().to_owned())
+                .data
+                .as_str()
+                .and_then(|data| checked_type(data, name))
         })
         .next_back()
+}
+
+fn checked_type(message: &str, name: &str) -> Option<String> {
+    let declaration = message
+        .strip_prefix(name)
+        .or_else(|| message.strip_prefix('@')?.strip_prefix(name))?;
+    if !declaration.starts_with(char::is_whitespace) && !declaration.starts_with(".{") {
+        return None;
+    }
+    let mut depth = 0_u32;
+    for (offset, character) in declaration.char_indices() {
+        match character {
+            '(' | '[' | '{' | '\u{2983}' => depth += 1,
+            ')' | ']' | '}' | '\u{2984}' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 => {
+                let prefix = strip_universe_suffix(declaration[..offset].trim());
+                let type_ = declaration[offset + character.len_utf8()..].trim();
+                return if prefix.is_empty() {
+                    Some(type_.to_owned())
+                } else {
+                    Some(format!("{prefix} : {type_}"))
+                };
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn strip_universe_suffix(declaration: &str) -> &str {
+    let Some(mut suffix) = declaration.strip_prefix(".{") else {
+        return declaration;
+    };
+    let mut depth = 1_u32;
+    while let Some((character, rest)) = suffix.chars().next().map(|character| {
+        let offset = character.len_utf8();
+        (character, &suffix[offset..])
+    }) {
+        suffix = rest;
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return suffix.trim_start();
+                }
+            }
+            _ => {}
+        }
+    }
+    declaration
 }
 
 fn source_path(source: &Project, execution: &Project, path: &Path) -> PathBuf {
@@ -2793,16 +2860,46 @@ mod tests {
 
         let unpacked = parse_build_event("✔ [6/6] Unpacked Mathlib").unwrap();
         assert_eq!(unpacked.action, BuildEventAction::Unpacked);
+
+        assert!(parse_build_event("prefix] Built Root (12ms)").is_none());
+        assert!(parse_build_event("✔ [one/3] Built Root (12ms)").is_none());
     }
 
     #[test]
     fn extracts_the_last_structured_check_result() {
-        let output = br#"{"data":"first : Nat","severity":"information"}
+        let output = br#"{"data":"unrelated : Nat","severity":"information"}
 {"data":"Nat.add_comm : \u2200 (n m : Nat), n + m = m + n","severity":"information"}
+{"data":"Nat.add_comm_extra : Bool","severity":"information"}
 "#;
         assert_eq!(
-            parse_checked_type(output).as_deref(),
+            parse_checked_type(output, "Nat.add_comm").as_deref(),
             Some("∀ (n m : Nat), n + m = m + n")
         );
+    }
+
+    #[test]
+    fn preserves_ordinary_and_implicit_binders() {
+        let output =
+            br#"{"data":"hello.{u} {\u03b1 : Type u} (value : \u03b1) : \u03b1","severity":"information"}"#;
+        assert_eq!(
+            parse_checked_type(output, "hello").as_deref(),
+            Some("{α : Type u} (value : α) : α")
+        );
+    }
+
+    #[test]
+    fn preserves_strict_implicit_binders() {
+        let output =
+            br#"{"data":"strict \u2983\u03b1 : Type\u2984 (value : \u03b1) : \u03b1","severity":"information"}"#;
+        assert_eq!(
+            parse_checked_type(output, "strict").as_deref(),
+            Some("⦃α : Type⦄ (value : α) : α")
+        );
+    }
+
+    #[test]
+    fn accepts_check_output_that_keeps_the_explicit_marker() {
+        let output = br#"{"data":"@hello : Nat","severity":"information"}"#;
+        assert_eq!(parse_checked_type(output, "hello").as_deref(), Some("Nat"));
     }
 }

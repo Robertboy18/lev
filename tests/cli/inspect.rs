@@ -405,6 +405,40 @@ fn inspect_build_reports_deduplicated_root_causes_and_failed_targets() {
 }
 
 #[test]
+fn inspect_build_runs_when_pre_build_trace_capture_fails() {
+    let fixture = Fixture::new();
+    write_empty_project(&fixture.project, "root");
+    fs::write(fixture.project.join("Root.lean"), "def root := 1\n").unwrap();
+    let build_root = fixture.project.join(".lake/build");
+    fs::create_dir_all(&build_root).unwrap();
+    let mut permissions = fs::metadata(&build_root).unwrap().permissions();
+    permissions.set_mode(0o000);
+    fs::set_permissions(&build_root, permissions).unwrap();
+
+    let output = fixture
+        .lev()
+        .args(["inspect", "build", "--no-sync", "--offline", "--json"])
+        .output()
+        .unwrap();
+
+    let mut permissions = fs::metadata(&build_root).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&build_root, permissions).unwrap();
+
+    assert_success_ref(&output);
+    let report = json_data(&output, "lev.cli.inspect.build/v1");
+    assert!(report["trace_changes"].as_array().unwrap().is_empty());
+    assert!(report["unattributed_work"].as_array().unwrap().is_empty());
+    assert!(
+        report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("before the build"))
+    );
+}
+
+#[test]
 fn inspect_build_preserves_lake_failure_when_post_build_trace_capture_fails() {
     let fixture = Fixture::new();
     write_empty_project(&fixture.project, "root");
@@ -613,7 +647,7 @@ fn inspect_declaration_recovers_location_import_and_lean_checked_type() {
     let lean_output = fixture.root.join("lean-check.jsonl");
     fs::write(
         &lean_output,
-        "{\"data\":\"hello : Nat\",\"severity\":\"information\"}\n",
+        "{\"data\":\"hello : (n : Nat) → n = n\",\"severity\":\"information\"}\n",
     )
     .unwrap();
 
@@ -626,7 +660,7 @@ fn inspect_declaration_recovers_location_import_and_lean_checked_type() {
     assert_success_ref(&output);
     let report = json_data(&output, "lev.cli.inspect.declaration/v1");
     assert_eq!(report["name"], "hello");
-    assert_eq!(report["type"], "Nat");
+    assert_eq!(report["type"], "(n : Nat) → n = n");
     assert_eq!(report["module"], "Root");
     assert_eq!(report["import"], "import Root");
     assert_eq!(report["package"], "root");
@@ -966,6 +1000,21 @@ fn check_selects_project_verification_or_single_file_elaboration() {
         .output()
         .unwrap();
     assert_success_ref(&legacy_file);
+
+    let legacy_with_lean_flag = fixture
+        .lev()
+        .arg("check")
+        .arg(&source)
+        .args(["--no-sync", "--offline", "-Dpp.universes=true"])
+        .output()
+        .unwrap();
+    assert_success_ref(&legacy_with_lean_flag);
+    assert!(
+        fs::read_to_string(&fixture.log)
+            .unwrap()
+            .lines()
+            .any(|line| line.starts_with("lake-lean\t") && line.ends_with("-Dpp.universes=true"))
+    );
 
     let target = fixture
         .lev()

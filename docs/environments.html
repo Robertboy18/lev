@@ -12,7 +12,7 @@
     <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
         <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
         <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
@@ -97,23 +97,14 @@ lev project use leanprover/lean4:v4.19.0</code></pre></div>
             <div><dt>Lake artifacts</dt><dd>Toolchain-specific, compatibility-keyed builds</dd></div>
           </dl>
           <p>Lake decides whether a build artifact matches the trace keys for the current target. lev makes that reuse practical across projects and toolchain variants without collapsing them into one mutable workspace.</p>
-          <figure class="plot">
-            <figcaption>One fresh-checkout cache comparison<span class="caption-detail">Elapsed wall time measured on one machine with identical project inputs.</span></figcaption>
-            <svg viewBox="0 0 760 245" role="img" aria-labelledby="cache-chart-title cache-chart-desc">
-              <title id="cache-chart-title">Cold Lake and warm shared-cache build times</title>
-              <desc id="cache-chart-desc">Default Lake with an empty local artifact cache took 9.66 seconds. lev with a compatible shared cache took 0.26 seconds. Lake configured manually with that same shared cache took 0.25 seconds.</desc>
-              <line class="axis" x1="145" y1="210" x2="720" y2="210"/><line class="grid" x1="145" y1="40" x2="145" y2="210"/><line class="grid" x1="432" y1="40" x2="432" y2="210"/><line class="grid" x1="720" y1="40" x2="720" y2="210"/>
-              <text x="140" y="232">0 s</text><text x="420" y="232">5 s</text><text x="700" y="232">10 s</text>
-              <text x="18" y="77">Cold Lake</text><text x="18" y="132">Warm lev</text><text x="18" y="187">Warm Lake</text>
-              <rect class="bar-blue" x="145" y="52" width="555" height="34"/><rect class="bar-green" x="145" y="107" width="15" height="34"/><rect class="bar-purple" x="145" y="162" width="14" height="34"/>
-              <text x="650" y="75">9.66 s</text><text x="172" y="130">0.26 s</text><text x="171" y="185">0.25 s</text>
-            </svg>
-            <div class="mobile-chart" role="img" aria-label="Cold Lake: 9.66 seconds. Warm lev: 0.26 seconds. Warm manually configured Lake: 0.25 seconds.">
-              <div class="mobile-bar-row"><span>Cold Lake</span><div class="mobile-bar-track"><i class="fill-blue" style="width:100%"></i></div><strong>9.66 s</strong></div>
-              <div class="mobile-bar-row"><span>Warm lev</span><div class="mobile-bar-track"><i class="fill-green" style="width:2.7%"></i></div><strong>0.26 s</strong></div>
-              <div class="mobile-bar-row"><span>Warm Lake</span><div class="mobile-bar-track"><i class="fill-purple" style="width:2.6%"></i></div><strong>0.25 s</strong></div>
+          <figure class="diagram">
+            <figcaption>A shared cache changes where Lake looks for compatible artifacts; it does not change how Lake decides that an artifact matches.</figcaption>
+            <div class="flow" role="img" aria-label="Lev selects the project and toolchain, Lake computes trace identity, the shared cache is checked, then Lake either reuses a compatible artifact or runs the ordinary build">
+              <div class="flow-node"><strong>Select</strong><span>project and toolchain</span></div>
+              <div class="flow-node"><strong>Identify</strong><span>Lake trace inputs</span></div>
+              <div class="flow-node emphasis"><strong>Look up</strong><span>shared artifact mapping</span></div>
+              <div class="flow-node"><strong>Resolve</strong><span>reuse a match or build a miss</span></div>
             </div>
-            <p class="plot-data">Read this chart for the mechanism. Once a compatible artifact exists, Lake performs the artifact lookup; lev supplies the shared path, toolchain namespace, locking, verification, and cleanup around it.</p>
           </figure>
           <p>A cache hit may skip work, but it does not weaken the lock. Cache misses fall back to the normal Lake build path.</p>
           <h3>The cache decision, step by step</h3>

@@ -121,15 +121,8 @@ impl TraceSnapshot {
         }
 
         let mut snapshot = Self::default();
-        let mut entries = 0_usize;
-        let mut total_bytes = 0_u64;
-        visit_traces(
-            project_root,
-            &build_root,
-            &mut entries,
-            &mut total_bytes,
-            &mut snapshot,
-        )?;
+        let mut budget = TraceBudget::default();
+        visit_traces(project_root, &build_root, &mut budget, &mut snapshot)?;
         Ok(snapshot)
     }
 
@@ -200,20 +193,31 @@ impl TraceSnapshot {
     }
 }
 
+#[derive(Debug, Default)]
+struct TraceBudget {
+    entries: usize,
+    total_bytes: u64,
+    stopped: bool,
+}
+
 fn visit_traces(
     project_root: &Path,
     directory: &Path,
-    entries: &mut usize,
-    total_bytes: &mut u64,
+    budget: &mut TraceBudget,
     snapshot: &mut TraceSnapshot,
 ) -> Result<()> {
-    let mut children = fs::read_dir(directory)
-        .with_context(|| {
-            format!(
-                "failed to read Lake build directory {}",
-                directory.display()
-            )
-        })?
+    if budget.stopped {
+        return Ok(());
+    }
+    let children = fs::read_dir(directory).with_context(|| {
+        format!(
+            "failed to read Lake build directory {}",
+            directory.display()
+        )
+    })?;
+    let remaining = MAX_ENTRIES.saturating_sub(budget.entries);
+    let mut children = children
+        .take(remaining.saturating_add(1))
         .collect::<std::io::Result<Vec<_>>>()
         .with_context(|| {
             format!(
@@ -221,16 +225,18 @@ fn visit_traces(
                 directory.display()
             )
         })?;
-    children.sort_by_key(|entry| entry.file_name());
+    if children.len() > remaining {
+        snapshot.warnings.push(format!(
+            "stopped reading Lake traces after {MAX_ENTRIES} build entries"
+        ));
+        budget.entries = MAX_ENTRIES;
+        budget.stopped = true;
+        return Ok(());
+    }
+    budget.entries += children.len();
+    children.sort_by_key(|child| child.file_name());
 
     for child in children {
-        *entries += 1;
-        if *entries > MAX_ENTRIES {
-            snapshot.warnings.push(format!(
-                "stopped reading Lake traces after {MAX_ENTRIES} build entries"
-            ));
-            return Ok(());
-        }
         let file_type = child
             .file_type()
             .with_context(|| format!("failed to inspect {}", child.path().display()))?;
@@ -238,7 +244,10 @@ fn visit_traces(
             continue;
         }
         if file_type.is_dir() {
-            visit_traces(project_root, &child.path(), entries, total_bytes, snapshot)?;
+            visit_traces(project_root, &child.path(), budget, snapshot)?;
+            if budget.stopped {
+                return Ok(());
+            }
             continue;
         }
         let path = child.path();
@@ -257,11 +266,12 @@ fn visit_traces(
             ));
             continue;
         }
-        *total_bytes = total_bytes.saturating_add(metadata.len());
-        if *total_bytes > MAX_TOTAL_TRACE_BYTES {
+        budget.total_bytes = budget.total_bytes.saturating_add(metadata.len());
+        if budget.total_bytes > MAX_TOTAL_TRACE_BYTES {
             snapshot
                 .warnings
                 .push("stopped after reading 2 GiB of Lake trace metadata".to_owned());
+            budget.stopped = true;
             return Ok(());
         }
         let bytes =
@@ -408,7 +418,54 @@ fn display_relative(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TraceChangeStatus, TraceInputKind, TraceSnapshot, classify_input, parse_trace};
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::{
+        MAX_ENTRIES, TraceBudget, TraceChangeStatus, TraceInputKind, TraceSnapshot, classify_input,
+        parse_trace, visit_traces,
+    };
+
+    #[test]
+    fn stopped_trace_budget_skips_later_directories() {
+        let temp = tempdir().unwrap();
+        let first = temp.path().join("first");
+        fs::create_dir(&first).unwrap();
+        fs::write(first.join("ignored.trace"), b"{}").unwrap();
+
+        let mut budget = TraceBudget {
+            entries: MAX_ENTRIES,
+            ..TraceBudget::default()
+        };
+        let mut snapshot = TraceSnapshot::default();
+        visit_traces(temp.path(), &first, &mut budget, &mut snapshot).unwrap();
+        assert!(budget.stopped);
+        assert_eq!(snapshot.warnings.len(), 1);
+
+        visit_traces(
+            temp.path(),
+            &temp.path().join("missing"),
+            &mut budget,
+            &mut snapshot,
+        )
+        .unwrap();
+        assert_eq!(snapshot.warnings.len(), 1);
+    }
+
+    #[test]
+    fn trace_warnings_follow_filename_order() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join("z.trace"), b"not json").unwrap();
+        fs::write(temp.path().join("a.trace"), b"still not json").unwrap();
+
+        let mut budget = TraceBudget::default();
+        let mut snapshot = TraceSnapshot::default();
+        visit_traces(temp.path(), temp.path(), &mut budget, &mut snapshot).unwrap();
+
+        assert!(snapshot.warnings[0].contains("a.trace"));
+        assert!(snapshot.warnings[1].contains("z.trace"));
+    }
 
     #[test]
     fn flattens_labeled_inputs_and_recovers_the_module_target() {

@@ -12,7 +12,7 @@
     <header class="topbar"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a><button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button><nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav></header>
     <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
     <div class="docs-shell">
-      <aside role="note" class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
         <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
         <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
@@ -31,7 +31,7 @@ lev inspect performance --warmup 1 --repeat 5 --json --output profile.json -- la
         </section>
 
         <section id="tools"><h2>Measurement tools and their scope</h2>
-          <p>Lean work can be timed at several layers. <code>time</code> is enough for a quick total, and <code>hyperfine</code> is a stronger general benchmark harness. lev adds project-aware phase timing, reports, and file ranking around Lake and Lean.</p>
+          <p>Lean work can be timed at several layers. <code>time</code> is enough for a quick total, and <code>hyperfine</code> is a stronger general benchmark runner. lev adds project-aware phase timing, reports, and file ranking around Lake and Lean.</p>
           <div class="table-wrap"><table><thead><tr><th scope="col">Tool</th><th scope="col">What it sees</th><th scope="col">Use it for</th></tr></thead><tbody>
             <tr><th scope="row"><code>time lake build</code></th><td>One total wall-clock duration for one command.</td><td>Quick local curiosity. Good for "did this feel slow?" and not much more.</td></tr>
             <tr><th scope="row"><code>hyperfine</code></th><td>Repeated shell-command timings with strong benchmark ergonomics.</td><td>Careful A/B command benchmarking that does not need lev's project-specific JSON or file mode.</td></tr>
@@ -69,10 +69,10 @@ lev timing: total 441.176 ms</code></pre></div>
               <text x="90" y="158">env</text><text x="132" y="113">prepare 141.0 ms</text><text x="413" y="113">delegated command 299.7 ms</text>
             </svg>
             <div class="mobile-chart" role="img" aria-label="Environment 0.001 milliseconds, prepare 140.983 milliseconds, locks 0.343 milliseconds, delegated command 299.666 milliseconds.">
-              <div class="mobile-bar-row"><span>Environment</span><div class="mobile-bar-track"><i class="fill-blue min-visible" style="width:0.01%"></i></div><strong>0.001 ms</strong></div>
-              <div class="mobile-bar-row"><span>Prepare</span><div class="mobile-bar-track"><i class="fill-amber" style="width:31.95%"></i></div><strong>141.0 ms</strong></div>
-              <div class="mobile-bar-row"><span>Locks</span><div class="mobile-bar-track"><i class="fill-purple min-visible" style="width:0.08%"></i></div><strong>0.3 ms</strong></div>
-              <div class="mobile-bar-row"><span>Command</span><div class="mobile-bar-track"><i class="fill-green" style="width:67.92%"></i></div><strong>299.7 ms</strong></div>
+              <div class="mobile-bar-row"><span>Environment</span><div class="mobile-bar-track"><i class="fill-blue min-visible width-001"></i></div><strong>0.001 ms</strong></div>
+              <div class="mobile-bar-row"><span>Prepare</span><div class="mobile-bar-track"><i class="fill-amber width-3195"></i></div><strong>141.0 ms</strong></div>
+              <div class="mobile-bar-row"><span>Locks</span><div class="mobile-bar-track"><i class="fill-purple min-visible width-008"></i></div><strong>0.3 ms</strong></div>
+              <div class="mobile-bar-row"><span>Command</span><div class="mobile-bar-track"><i class="fill-green width-6792"></i></div><strong>299.7 ms</strong></div>
             </div>
             <p class="plot-data">Example values: environment 0.001 ms, prepare 140.983 ms, locks 0.343 ms, command 299.666 ms, total 441.176 ms. The environment and lock phases are widened slightly so they remain visible.</p>
           </figure>
@@ -128,11 +128,11 @@ performance: 5 samples, command `lake build`
               <text x="143" y="229">1</text><text x="263" y="229">2</text><text x="383" y="229">3</text><text x="503" y="229">4</text><text x="623" y="229">5</text>
             </svg>
             <div class="mobile-chart" role="img" aria-label="Five samples: 299.147, 297.862, 309.765, 304.074, and 304.723 milliseconds. Mean 303.114 milliseconds.">
-              <div class="mobile-bar-row"><span>Sample 1</span><div class="mobile-bar-track"><i class="fill-blue" style="width:21%"></i></div><strong>299.1</strong></div>
-              <div class="mobile-bar-row"><span>Sample 2</span><div class="mobile-bar-track"><i class="fill-green" style="width:12%"></i></div><strong>297.9</strong></div>
-              <div class="mobile-bar-row"><span>Sample 3</span><div class="mobile-bar-track"><i class="fill-amber" style="width:92%"></i></div><strong>309.8</strong></div>
-              <div class="mobile-bar-row"><span>Sample 4</span><div class="mobile-bar-track"><i class="fill-blue" style="width:54%"></i></div><strong>304.1</strong></div>
-              <div class="mobile-bar-row"><span>Sample 5</span><div class="mobile-bar-track"><i class="fill-green" style="width:58%"></i></div><strong>304.7</strong></div>
+              <div class="mobile-bar-row"><span>Sample 1</span><div class="mobile-bar-track"><i class="fill-blue width-21"></i></div><strong>299.1</strong></div>
+              <div class="mobile-bar-row"><span>Sample 2</span><div class="mobile-bar-track"><i class="fill-green width-12"></i></div><strong>297.9</strong></div>
+              <div class="mobile-bar-row"><span>Sample 3</span><div class="mobile-bar-track"><i class="fill-amber width-92"></i></div><strong>309.8</strong></div>
+              <div class="mobile-bar-row"><span>Sample 4</span><div class="mobile-bar-track"><i class="fill-blue width-54"></i></div><strong>304.1</strong></div>
+              <div class="mobile-bar-row"><span>Sample 5</span><div class="mobile-bar-track"><i class="fill-green width-58"></i></div><strong>304.7</strong></div>
               <div class="mobile-legend"><span>Scale begins at 296 ms</span><span>Mean: 303.1 ms</span></div>
             </div>
             <p class="plot-data">Sample values: 299.147, 297.862, 309.765, 304.074, 304.723 ms. Summary: min 297.862, median 304.074, mean 303.114, max 309.765 ms.</p>
@@ -210,7 +210,7 @@ performance: 5 samples, command `lake build`
     "exit_code": 0
   }
 }</code></pre></div>
-          <p class="example-caption">The JSON keeps every measured sample, not just the summary row. Save it when you want to compare a later run without relying on terminal copy-paste.</p>
+          <p class="example-caption">The JSON keeps every measured sample alongside the summary row. Save it when you want to compare a later run without relying on terminal copy-paste.</p>
           <div class="command-block"><div class="command-label">Pull out the data later</div><pre><code class="language-bash">jq '.data | {command, samples_ms, summary}' profile.json</code></pre></div>
           <p>If a measured process fails, lev records that sample's elapsed time, stops immediately, writes a partial report with <code>completed_repeats</code>, and returns the child's exit code. If a warmup fails, no measured sample is reported: text output says so directly, and JSON sets <code>summary</code> to <code>null</code> instead of inventing zero timings.</p>
           <aside role="note" class="note"><strong>The two profile commands publish different contracts.</strong> The visible direct command <code>lev profile --json</code> emits the command-only <code>lev.cli.profile/v1</code> report. <code>lev inspect performance --json</code> emits <code>lev.cli.inspect.performance/v1</code> and includes the mode and file fields needed by project-wide profiling. Branch on the schema string before parsing command-specific fields.</aside>
