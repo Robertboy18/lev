@@ -1,643 +1,770 @@
-//! Bounded parsing and comparison of Lake build traces.
+//! Lake's `.trace` files and what changed in them across one build.
+//!
+//! A trace (schema 2025-09-10) records the hash of each labeled input of one
+//! build job, the combined `depHash`, and the artifacts the job produced. Lake
+//! names the module, its source file, its options, the Lean commit, and each
+//! direct import in those labels, so a changed label is an observed reason for
+//! a rebuild. Traces that came from a cache download carry no inputs; for those
+//! modules the reason is inferred from imports whose public `.olean` changed.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-const MAX_ENTRIES: usize = 500_000;
+use super::Package;
+use super::import_graph::{downstream, module_from_path};
+
 const MAX_TRACE_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_TOTAL_TRACE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
-#[derive(Debug, Default)]
-pub struct TraceSnapshot {
-    traces: BTreeMap<String, BuildTrace>,
-    pub warnings: Vec<String>,
+/// One parsed trace file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Trace {
+    pub dep_hash: Option<String>,
+    /// Labeled input hashes. Nested labels are joined with ` / `.
+    pub inputs: BTreeMap<String, String>,
+    /// Every artifact named in `outputs`, such as `0123456789abcdef.olean`.
+    pub outputs: BTreeSet<String>,
+    /// The module's public `.olean`: the first entry of `outputs.o`.
+    pub olean: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BuildTrace {
-    dep_hash: Option<String>,
-    inputs: BTreeMap<String, String>,
-    target: Option<String>,
-    metadata: TraceMetadata,
+#[derive(Debug, Deserialize)]
+struct RawTrace {
+    #[serde(rename = "depHash", default)]
+    dep_hash: Value,
+    #[serde(default)]
+    inputs: Value,
+    #[serde(default)]
+    outputs: Value,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TraceChangeStatus {
-    Created,
-    Changed,
-    Removed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TraceInputKind {
-    Source,
-    Dependency,
-    Options,
-    Toolchain,
-    Configuration,
-    Other,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TraceInputChange {
-    pub input: String,
-    pub kind: TraceInputKind,
-    pub before: Option<String>,
-    pub after: Option<String>,
-}
-
-/// One labeled input from the current trace.
-///
-/// This is deliberately distinct from [`TraceInputChange`]. A newly created
-/// trace has useful current inputs, but no earlier trace against which those
-/// inputs can be called changed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TraceInput {
-    pub input: String,
-    pub kind: TraceInputKind,
-    pub hash: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TraceMetadata {
-    pub schema_version: Option<String>,
-    pub synthetic: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct OpaqueDepHashChange {
-    pub before: Option<String>,
-    pub after: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TraceChange {
-    pub trace: String,
-    pub target: Option<String>,
-    pub status: TraceChangeStatus,
-    pub reason: String,
-    pub inputs: Vec<TraceInputChange>,
-    // Keep the existing build-inspection JSON contract stable. These details
-    // are available to the causality layer through the accessors below.
-    #[serde(skip)]
-    current_inputs: Vec<TraceInput>,
-    #[serde(skip)]
-    previous_metadata: Option<TraceMetadata>,
-    #[serde(skip)]
-    current_metadata: Option<TraceMetadata>,
-    #[serde(skip)]
-    opaque_dep_hash_change: Option<OpaqueDepHashChange>,
-}
-
-impl TraceChange {
-    pub fn current_inputs(&self) -> &[TraceInput] {
-        &self.current_inputs
-    }
-
-    pub fn previous_metadata(&self) -> Option<&TraceMetadata> {
-        self.previous_metadata.as_ref()
-    }
-
-    pub fn current_metadata(&self) -> Option<&TraceMetadata> {
-        self.current_metadata.as_ref()
-    }
-
-    pub fn opaque_dep_hash_change(&self) -> Option<&OpaqueDepHashChange> {
-        self.opaque_dep_hash_change.as_ref()
-    }
-}
-
-impl TraceSnapshot {
-    pub fn capture(project_root: &Path) -> Result<Self> {
-        let build_root = project_root.join(".lake/build");
-        if !build_root.is_dir() {
-            return Ok(Self::default());
+impl Trace {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let raw: RawTrace = serde_json::from_slice(bytes).context("invalid trace JSON")?;
+        let mut inputs = BTreeMap::new();
+        flatten_inputs(&raw.inputs, &mut Vec::new(), &mut inputs);
+        let mut outputs = BTreeSet::new();
+        collect_outputs(&raw.outputs, &mut outputs);
+        let olean = match raw.outputs.get("o") {
+            Some(Value::Array(oleans)) => oleans.first().and_then(Value::as_str),
+            Some(Value::String(olean)) => Some(olean.as_str()),
+            _ => None,
         }
-
-        let mut snapshot = Self::default();
-        let mut budget = TraceBudget::default();
-        visit_traces(project_root, &build_root, &mut budget, &mut snapshot)?;
-        Ok(snapshot)
+        .map(str::to_owned);
+        let dep_hash = match raw.dep_hash {
+            Value::String(hash) => Some(hash),
+            Value::Number(hash) => Some(hash.to_string()),
+            _ => None,
+        };
+        Ok(Self {
+            dep_hash,
+            inputs,
+            outputs,
+            olean,
+        })
     }
 
-    pub fn changes_since(&self, current: &Self) -> Vec<TraceChange> {
-        let paths = self
-            .traces
+    /// The direct imports named by this trace's `imports` inputs.
+    pub fn imports(&self) -> BTreeSet<String> {
+        self.inputs
             .keys()
-            .chain(current.traces.keys())
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let mut changes = Vec::new();
-
-        for path in paths {
-            match (self.traces.get(&path), current.traces.get(&path)) {
-                (None, Some(trace)) => changes.push(TraceChange {
-                    trace: path,
-                    target: trace.target.clone(),
-                    status: TraceChangeStatus::Created,
-                    reason: "no previous Lake trace was available".to_owned(),
-                    inputs: Vec::new(),
-                    current_inputs: trace_inputs(&trace.inputs),
-                    previous_metadata: None,
-                    current_metadata: Some(trace.metadata.clone()),
-                    opaque_dep_hash_change: None,
-                }),
-                (Some(trace), None) => changes.push(TraceChange {
-                    trace: path,
-                    target: trace.target.clone(),
-                    status: TraceChangeStatus::Removed,
-                    reason: "the previous Lake trace is no longer present".to_owned(),
-                    inputs: Vec::new(),
-                    current_inputs: Vec::new(),
-                    previous_metadata: Some(trace.metadata.clone()),
-                    current_metadata: None,
-                    opaque_dep_hash_change: None,
-                }),
-                (Some(before), Some(after))
-                    if before.dep_hash != after.dep_hash || before.inputs != after.inputs =>
-                {
-                    let inputs = compare_inputs(&before.inputs, &after.inputs);
-                    let opaque_dep_hash_change = (before.dep_hash != after.dep_hash
-                        && inputs.is_empty())
-                    .then(|| OpaqueDepHashChange {
-                        before: before.dep_hash.clone(),
-                        after: after.dep_hash.clone(),
-                    });
-                    changes.push(TraceChange {
-                        trace: path,
-                        target: after.target.clone().or_else(|| before.target.clone()),
-                        status: TraceChangeStatus::Changed,
-                        reason: if opaque_dep_hash_change.is_some() {
-                            "Lake's dependency hash changed without an exposed labeled input change"
-                                .to_owned()
-                        } else {
-                            "one or more labeled Lake trace inputs changed".to_owned()
-                        },
-                        inputs,
-                        current_inputs: trace_inputs(&after.inputs),
-                        previous_metadata: Some(before.metadata.clone()),
-                        current_metadata: Some(after.metadata.clone()),
-                        opaque_dep_hash_change,
-                    });
-                }
-                _ => {}
-            }
-        }
-        changes
+            .filter_map(|label| import_of(label))
+            .collect()
     }
 }
 
-#[derive(Debug, Default)]
-struct TraceBudget {
-    entries: usize,
-    total_bytes: u64,
-    stopped: bool,
-}
-
-fn visit_traces(
-    project_root: &Path,
-    directory: &Path,
-    budget: &mut TraceBudget,
-    snapshot: &mut TraceSnapshot,
-) -> Result<()> {
-    if budget.stopped {
-        return Ok(());
-    }
-    let children = fs::read_dir(directory).with_context(|| {
-        format!(
-            "failed to read Lake build directory {}",
-            directory.display()
-        )
-    })?;
-    let remaining = MAX_ENTRIES.saturating_sub(budget.entries);
-    let mut children = children
-        .take(remaining.saturating_add(1))
+/// Call `visit` for every `.trace` file below `dir`, in path order.
+///
+/// Symbolic links are not followed. A trace larger than 64 MiB is reported as
+/// an error instead of being read.
+pub fn visit_traces(dir: &Path, visit: &mut dyn FnMut(&Path, Result<Trace>)) -> Result<()> {
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read {}", dir.display()))?
         .collect::<std::io::Result<Vec<_>>>()
-        .with_context(|| {
-            format!(
-                "failed to read Lake build directory {}",
-                directory.display()
-            )
-        })?;
-    if children.len() > remaining {
-        snapshot.warnings.push(format!(
-            "stopped reading Lake traces after {MAX_ENTRIES} build entries"
-        ));
-        budget.entries = MAX_ENTRIES;
-        budget.stopped = true;
-        return Ok(());
-    }
-    budget.entries += children.len();
-    children.sort_by_key(|child| child.file_name());
-
-    for child in children {
-        let file_type = child
+        .with_context(|| format!("failed to read {}", dir.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry
             .file_type()
-            .with_context(|| format!("failed to inspect {}", child.path().display()))?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            visit_traces(project_root, &child.path(), budget, snapshot)?;
-            if budget.stopped {
-                return Ok(());
-            }
-            continue;
-        }
-        let path = child.path();
-        if !file_type.is_file()
-            || path.extension().and_then(|value| value.to_str()) != Some("trace")
-        {
-            continue;
-        }
-        let metadata = child
-            .metadata()
             .with_context(|| format!("failed to inspect {}", path.display()))?;
-        if metadata.len() > MAX_TRACE_BYTES {
-            snapshot.warnings.push(format!(
-                "skipped oversized Lake trace {}",
-                display_relative(project_root, &path)
-            ));
-            continue;
-        }
-        budget.total_bytes = budget.total_bytes.saturating_add(metadata.len());
-        if budget.total_bytes > MAX_TOTAL_TRACE_BYTES {
-            snapshot
-                .warnings
-                .push("stopped after reading 2 GiB of Lake trace metadata".to_owned());
-            budget.stopped = true;
-            return Ok(());
-        }
-        let bytes =
-            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
-        match parse_trace(&bytes) {
-            Ok(trace) => {
-                snapshot
-                    .traces
-                    .insert(display_relative(project_root, &path), trace);
-            }
-            Err(error) => snapshot.warnings.push(format!(
-                "could not parse {}: {error:#}",
-                display_relative(project_root, &path)
-            )),
+        if file_type.is_dir() {
+            visit_traces(&path, visit)?;
+        } else if file_type.is_file()
+            && path.extension().and_then(|value| value.to_str()) == Some("trace")
+        {
+            // Lake may replace a trace between the listing and this read.
+            let size = match entry.metadata() {
+                Ok(metadata) => metadata.len(),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to inspect {}", path.display()));
+                }
+            };
+            let trace = if size > MAX_TRACE_BYTES {
+                Err(anyhow::anyhow!("trace is larger than 64 MiB"))
+            } else {
+                match fs::read(&path) {
+                    Ok(bytes) => Trace::parse(&bytes),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        Err(error).with_context(|| format!("failed to read {}", path.display()))
+                    }
+                }
+            };
+            visit(&path, trace);
         }
     }
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-struct RawTrace {
-    #[serde(rename = "depHash")]
-    dep_hash: Option<String>,
-    #[serde(default)]
-    inputs: serde_json::Value,
-    #[serde(rename = "schemaVersion")]
-    schema_version: Option<serde_json::Value>,
-    synthetic: Option<bool>,
+/// One module's trace and the package that owns it.
+#[derive(Debug, Clone)]
+pub struct ModuleTrace {
+    pub package: String,
+    pub trace: Trace,
 }
 
-fn parse_trace(bytes: &[u8]) -> Result<BuildTrace> {
-    let raw: RawTrace = serde_json::from_slice(bytes).context("invalid trace JSON")?;
-    let mut inputs = BTreeMap::new();
-    flatten_inputs(&raw.inputs, &mut Vec::new(), &mut inputs);
-    let target = inputs.keys().find_map(|label| {
-        label
-            .split(" / ")
-            .find_map(|part| part.strip_prefix("Module.name: "))
-            .map(str::to_owned)
-    });
-    Ok(BuildTrace {
-        dep_hash: raw.dep_hash,
-        inputs,
-        target,
-        metadata: TraceMetadata {
-            schema_version: raw.schema_version.and_then(render_schema_version),
-            synthetic: raw.synthetic,
-        },
-    })
+/// The module traces of a workspace, keyed by module name.
+#[derive(Debug, Default)]
+pub struct Snapshot {
+    pub modules: BTreeMap<String, ModuleTrace>,
+    pub warnings: Vec<String>,
 }
 
-fn render_schema_version(value: serde_json::Value) -> Option<String> {
-    match value {
-        serde_json::Value::String(value) => Some(value),
-        serde_json::Value::Number(value) => Some(value.to_string()),
-        _ => None,
+impl Snapshot {
+    /// Read the traces below `.lake/build/lib/lean` of every package.
+    pub fn capture(packages: &[Package]) -> Result<Self> {
+        let mut snapshot = Self::default();
+        for package in packages {
+            let library = package.root.join(".lake/build/lib/lean");
+            if !is_directory(&library)? {
+                continue;
+            }
+            let Snapshot { modules, warnings } = &mut snapshot;
+            visit_traces(&library, &mut |path, trace| {
+                let module = path.strip_prefix(&library).ok().and_then(module_from_path);
+                match (module, trace) {
+                    (Some(module), Ok(trace)) => match modules.entry(module) {
+                        Entry::Occupied(entry) => warnings.push(format!(
+                            "module {} has traces in more than one package; kept the first",
+                            entry.key()
+                        )),
+                        Entry::Vacant(entry) => {
+                            entry.insert(ModuleTrace {
+                                package: package.name.clone(),
+                                trace,
+                            });
+                        }
+                    },
+                    (None, _) => {
+                        warnings.push(format!("{} does not name a Lean module", path.display()))
+                    }
+                    (Some(_), Err(error)) => {
+                        warnings.push(format!("could not read {}: {error:#}", path.display()))
+                    }
+                }
+            })?;
+        }
+        Ok(snapshot)
     }
 }
 
-fn flatten_inputs(
-    value: &serde_json::Value,
-    prefix: &mut Vec<String>,
-    inputs: &mut BTreeMap<String, String>,
-) {
+/// Collect the `depHash` of every trace below `dir` and every artifact the
+/// traces name. A missing reference would make a cache entry look unused, so
+/// a trace that cannot be read or parsed, or that has no `depHash`, is an
+/// error, returned after the readable traces are collected. So is an
+/// unreadable directory.
+pub fn collect_references(
+    dir: &Path,
+    hashes: &mut BTreeSet<String>,
+    artifacts: &mut BTreeSet<String>,
+) -> Result<()> {
+    if !is_directory(dir)? {
+        return Ok(());
+    }
+    let mut unreadable = Vec::new();
+    visit_traces(dir, &mut |path, trace| match trace {
+        Ok(trace) => {
+            match trace.dep_hash {
+                Some(hash) => {
+                    hashes.insert(hash);
+                }
+                None => unreadable.push(format!("{} has no depHash", path.display())),
+            }
+            artifacts.extend(trace.outputs);
+        }
+        Err(error) => unreadable.push(format!("{}: {error:#}", path.display())),
+    })?;
+    match unreadable.as_slice() {
+        [] => Ok(()),
+        [only] => bail!("cannot read the trace {only}"),
+        [first, ..] => bail!("cannot read {} traces, the first {first}", unreadable.len()),
+    }
+}
+
+/// Whether `path` is a directory. A path that does not exist is not one; a
+/// path that cannot be inspected is an error rather than an empty build.
+fn is_directory(path: &Path) -> Result<bool> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("failed to inspect {}", path.display())),
+    }
+}
+
+/// The kind of a labeled trace input, read from Lake's caption for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputKind {
+    Source,
+    Import,
+    Dependency,
+    Libraries,
+    Toolchain,
+    Options,
+    Configuration,
+    Other,
+}
+
+/// One reason a module rebuilt: an input whose hash changed, or for an import,
+/// the imported module.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct Cause {
+    pub kind: InputKind,
+    pub input: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeStatus {
+    /// The module had no trace before the build.
+    New,
+    /// The module's trace changed.
+    Changed,
+}
+
+/// How one module's trace changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleChange {
+    pub module: String,
+    pub package: String,
+    pub status: ChangeStatus,
+    pub causes: Vec<Cause>,
+    /// One of the two traces recorded no inputs, so the causes were inferred
+    /// from changed imports instead of read from the trace.
+    pub inferred: bool,
+}
+
+/// What a build changed in a workspace's module traces.
+#[derive(Debug, Default)]
+pub struct Comparison {
+    pub changes: Vec<ModuleChange>,
+    pub removed: Vec<String>,
+}
+
+/// Compare the module traces before and after a build.
+pub fn compare(before: &Snapshot, after: &Snapshot) -> Comparison {
+    let mut comparison = Comparison {
+        removed: before
+            .modules
+            .keys()
+            .filter(|module| !after.modules.contains_key(*module))
+            .cloned()
+            .collect(),
+        ..Comparison::default()
+    };
+
+    let mut imports = BTreeMap::new();
+    let mut changed_oleans = BTreeSet::new();
+    for (module, current) in &after.modules {
+        let previous = before.modules.get(module).map(|previous| &previous.trace);
+        let current = &current.trace;
+        let source = if current.inputs.is_empty() {
+            previous.unwrap_or(current)
+        } else {
+            current
+        };
+        imports.insert(module.clone(), source.imports());
+        if previous.and_then(|trace| trace.olean.as_ref()) != current.olean.as_ref() {
+            changed_oleans.insert(module.clone());
+        }
+    }
+    let affected = downstream(&imports, &changed_oleans);
+
+    for (module, current) in &after.modules {
+        let change = match before.modules.get(module) {
+            None => ModuleChange {
+                module: module.clone(),
+                package: current.package.clone(),
+                status: ChangeStatus::New,
+                causes: Vec::new(),
+                inferred: false,
+            },
+            Some(previous)
+                if previous.trace.dep_hash != current.trace.dep_hash
+                    || previous.trace.inputs != current.trace.inputs =>
+            {
+                let recorded =
+                    !previous.trace.inputs.is_empty() && !current.trace.inputs.is_empty();
+                let causes = if recorded {
+                    label_causes(&previous.trace.inputs, &current.trace.inputs)
+                } else {
+                    imports[module]
+                        .iter()
+                        .filter(|import| *import != module && affected.contains(*import))
+                        .map(|import| Cause {
+                            kind: InputKind::Import,
+                            input: import.clone(),
+                        })
+                        .collect()
+                };
+                ModuleChange {
+                    module: module.clone(),
+                    package: current.package.clone(),
+                    status: ChangeStatus::Changed,
+                    causes,
+                    inferred: !recorded,
+                }
+            }
+            Some(_) => continue,
+        };
+        comparison.changes.push(change);
+    }
+    comparison
+}
+
+/// The causes read from the inputs that differ between two traces.
+fn label_causes(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> Vec<Cause> {
+    let mut causes = BTreeSet::new();
+    for (label, hash) in after {
+        if before.get(label) != Some(hash) {
+            causes.insert(cause_of(label));
+        }
+    }
+    // A vanished input matters unless a new input of its kind replaced it, as
+    // a new `Lean <version>, commit` label replaces the old one.
+    for label in before.keys().filter(|label| !after.contains_key(*label)) {
+        let cause = cause_of(label);
+        if cause.kind == InputKind::Import || !causes.iter().any(|known| known.kind == cause.kind) {
+            causes.insert(cause);
+        }
+    }
+    causes.into_iter().collect()
+}
+
+fn cause_of(label: &str) -> Cause {
+    match import_of(label) {
+        Some(module) => Cause {
+            kind: InputKind::Import,
+            input: module,
+        },
+        None => Cause {
+            kind: classify(label),
+            input: label.to_owned(),
+        },
+    }
+}
+
+/// Classify an input by the first segment of its label, which Lake writes
+/// from a fixed set of captions.
+fn classify(label: &str) -> InputKind {
+    let first = label.split(" / ").next().unwrap_or(label);
+    if first == "deps" || first.ends_with(":deps") {
+        InputKind::Dependency
+    } else if first == "libs" || first.ends_with(":libs") {
+        InputKind::Libraries
+    } else if first.starts_with("Lean ") && first.contains(", commit ") {
+        InputKind::Toolchain
+    } else if first == "options" || first.starts_with("Module.leanArgs:") {
+        InputKind::Options
+    } else if ["isModule:", "Module.name:", "Package.id?:"]
+        .iter()
+        .any(|prefix| first.starts_with(prefix))
+    {
+        InputKind::Configuration
+    } else if first.ends_with(".lean") {
+        InputKind::Source
+    } else {
+        InputKind::Other
+    }
+}
+
+/// The module named by an `imports / X:importArts` or
+/// `imports / X transitive imports (public)` input.
+fn import_of(label: &str) -> Option<String> {
+    let mut segments = label.split(" / ");
+    segments.by_ref().find(|segment| *segment == "imports")?;
+    let entry = segments.next()?;
+    let module = if let Some((module, _)) = entry.rsplit_once(" transitive imports (") {
+        module
+    } else if let Some((module, _)) = entry.rsplit_once(':') {
+        module
+    } else {
+        entry
+    };
+    (!module.is_empty()).then(|| module.to_owned())
+}
+
+fn flatten_inputs(value: &Value, prefix: &mut Vec<String>, inputs: &mut BTreeMap<String, String>) {
     let Some(entries) = value.as_array() else {
         return;
     };
     for entry in entries {
-        let Some(pair) = entry.as_array().filter(|pair| pair.len() == 2) else {
+        let Some([label, child]) = entry.as_array().map(Vec::as_slice) else {
             continue;
         };
-        let Some(label) = pair[0].as_str() else {
+        let Some(label) = label.as_str() else {
             continue;
         };
         prefix.push(label.to_owned());
-        if let Some(hash) = pair[1].as_str() {
+        if let Some(hash) = child.as_str() {
             inputs.insert(prefix.join(" / "), hash.to_owned());
         } else {
-            flatten_inputs(&pair[1], prefix, inputs);
+            flatten_inputs(child, prefix, inputs);
         }
         prefix.pop();
     }
 }
 
-fn compare_inputs(
-    before: &BTreeMap<String, String>,
-    after: &BTreeMap<String, String>,
-) -> Vec<TraceInputChange> {
-    before
-        .keys()
-        .chain(after.keys())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .filter_map(|input| {
-            let old = before.get(input);
-            let new = after.get(input);
-            (old != new).then(|| TraceInputChange {
-                input: input.clone(),
-                kind: classify_input(input),
-                before: old.cloned(),
-                after: new.cloned(),
-            })
-        })
-        .collect()
-}
-
-fn trace_inputs(inputs: &BTreeMap<String, String>) -> Vec<TraceInput> {
-    inputs
-        .iter()
-        .map(|(input, hash)| TraceInput {
-            input: input.clone(),
-            kind: classify_input(input),
-            hash: hash.clone(),
-        })
-        .collect()
-}
-
-fn classify_input(input: &str) -> TraceInputKind {
-    let lower = input.to_ascii_lowercase();
-    if lower.contains("lean ") && lower.contains("commit") {
-        TraceInputKind::Toolchain
-    } else if lower.contains("option") || lower.contains("leanargs") {
-        TraceInputKind::Options
-    } else if lower.contains(".lean") {
-        TraceInputKind::Source
-    } else if lower.contains("import") || lower.contains("deps") || lower.contains("library") {
-        TraceInputKind::Dependency
-    } else if lower.contains("package.")
-        || lower.contains("module.name")
-        || lower.contains("ismodule")
-    {
-        TraceInputKind::Configuration
-    } else {
-        TraceInputKind::Other
+fn collect_outputs(value: &Value, outputs: &mut BTreeSet<String>) {
+    match value {
+        Value::String(name) => {
+            outputs.insert(name.clone());
+        }
+        // Lake also accepts a bare 64-bit hash for an `.art` artifact.
+        Value::Number(hash) => {
+            if let Some(hash) = hash.as_u64() {
+                outputs.insert(format!("{hash:016x}.art"));
+            }
+        }
+        Value::Array(values) => values
+            .iter()
+            .for_each(|value| collect_outputs(value, outputs)),
+        Value::Object(values) => values
+            .values()
+            .for_each(|value| collect_outputs(value, outputs)),
+        Value::Null | Value::Bool(_) => {}
     }
-}
-
-fn display_relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
 
+    use serde_json::json;
     use tempfile::tempdir;
 
     use super::{
-        MAX_ENTRIES, TraceBudget, TraceChangeStatus, TraceInputKind, TraceSnapshot, classify_input,
-        parse_trace, visit_traces,
+        Cause, ChangeStatus, InputKind, ModuleTrace, Snapshot, Trace, classify, collect_references,
+        compare,
     };
+    use crate::project::Package;
 
-    #[test]
-    fn stopped_trace_budget_skips_later_directories() {
-        let temp = tempdir().unwrap();
-        let first = temp.path().join("first");
-        fs::create_dir(&first).unwrap();
-        fs::write(first.join("ignored.trace"), b"{}").unwrap();
-
-        let mut budget = TraceBudget {
-            entries: MAX_ENTRIES,
-            ..TraceBudget::default()
-        };
-        let mut snapshot = TraceSnapshot::default();
-        visit_traces(temp.path(), &first, &mut budget, &mut snapshot).unwrap();
-        assert!(budget.stopped);
-        assert_eq!(snapshot.warnings.len(), 1);
-
-        visit_traces(
-            temp.path(),
-            &temp.path().join("missing"),
-            &mut budget,
-            &mut snapshot,
-        )
-        .unwrap();
-        assert_eq!(snapshot.warnings.len(), 1);
+    fn trace(value: serde_json::Value) -> Trace {
+        Trace::parse(&serde_json::to_vec(&value).unwrap()).unwrap()
     }
 
-    #[test]
-    fn trace_warnings_follow_filename_order() {
-        let temp = tempdir().unwrap();
-        fs::write(temp.path().join("z.trace"), b"not json").unwrap();
-        fs::write(temp.path().join("a.trace"), b"still not json").unwrap();
-
-        let mut budget = TraceBudget::default();
-        let mut snapshot = TraceSnapshot::default();
-        visit_traces(temp.path(), temp.path(), &mut budget, &mut snapshot).unwrap();
-
-        assert!(snapshot.warnings[0].contains("a.trace"));
-        assert!(snapshot.warnings[1].contains("z.trace"));
+    fn module_trace(depends: &str, source: &str, imports: &[(&str, &str)], olean: &str) -> Trace {
+        let imports = imports
+            .iter()
+            .flat_map(|(module, hash)| {
+                [
+                    json!([format!("{module}:importArts"), hash]),
+                    json!([format!("{module} transitive imports (public)"), hash]),
+                ]
+            })
+            .collect::<Vec<_>>();
+        trace(json!({
+            "depHash": depends,
+            "inputs": [
+                ["deps", [["imports", imports]]],
+                ["Lean 4.x, commit abc", "toolchain"],
+                ["/project/Root.lean", source],
+                ["options", "none"],
+                ["Module.name: Root", "name"]
+            ],
+            "outputs": {"o": [format!("{olean}.olean"), "1111111111111111.olean.server"], "i": "2222222222222222.ilean", "m": true}
+        }))
     }
 
-    #[test]
-    fn flattens_labeled_inputs_and_recovers_the_module_target() {
-        let trace = parse_trace(
-            br#"{
-              "depHash": "new",
-              "schemaVersion": 3,
-              "synthetic": true,
-              "inputs": [
-                ["Root:deps", [["imports", [["Mathlib:importAllArts", "abc"]]]]],
-                ["/project/Root.lean", "source"],
-                ["Module.name: Root", "module"]
-              ]
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(trace.target.as_deref(), Some("Root"));
-        assert_eq!(trace.inputs["/project/Root.lean"], "source");
-        assert_eq!(
-            trace.inputs["Root:deps / imports / Mathlib:importAllArts"],
-            "abc"
-        );
-        assert_eq!(trace.metadata.schema_version.as_deref(), Some("3"));
-        assert_eq!(trace.metadata.synthetic, Some(true));
+    fn cached(depends: &str, olean: &str) -> Trace {
+        trace(json!({
+            "schemaVersion": "2025-09-10",
+            "depHash": depends,
+            "outputs": {"o": [format!("{olean}.olean")], "m": true}
+        }))
     }
 
-    #[test]
-    fn compares_only_changed_trace_inputs() {
-        let before = TraceSnapshot {
-            traces: [(
-                ".lake/build/Root.trace".to_owned(),
-                parse_trace(br#"{"depHash":"a","inputs":[["Root.lean","one"]]}"#).unwrap(),
-            )]
-            .into(),
-            warnings: Vec::new(),
-        };
-        let after = TraceSnapshot {
-            traces: [(
-                ".lake/build/Root.trace".to_owned(),
-                parse_trace(br#"{"depHash":"b","inputs":[["Root.lean","two"]]}"#).unwrap(),
-            )]
-            .into(),
-            warnings: Vec::new(),
-        };
-        let changes = before.changes_since(&after);
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].inputs.len(), 1);
-        assert_eq!(changes[0].inputs[0].kind, TraceInputKind::Source);
-        assert!(changes[0].opaque_dep_hash_change().is_none());
-        assert_eq!(changes[0].current_inputs().len(), 1);
-    }
-
-    #[test]
-    fn exposes_cold_trace_inputs_without_reporting_them_as_changes() {
-        let before = TraceSnapshot::default();
-        let after = TraceSnapshot {
-            traces: [(
-                ".lake/build/Root.trace".to_owned(),
-                parse_trace(
-                    br#"{
-                      "depHash":"new",
-                      "schemaVersion":"1.2.0",
-                      "synthetic":false,
-                      "inputs":[
-                        ["Root.lean","source"],
-                        ["Module.name: Root","module"]
-                      ]
-                    }"#,
-                )
-                .unwrap(),
-            )]
-            .into(),
-            warnings: Vec::new(),
-        };
-
-        let changes = before.changes_since(&after);
-        assert_eq!(changes.len(), 1);
-        let change = &changes[0];
-        assert_eq!(change.status, TraceChangeStatus::Created);
-        assert!(change.inputs.is_empty());
-        assert_eq!(
-            change
-                .current_inputs()
+    fn snapshot(modules: &[(&str, Trace)]) -> Snapshot {
+        Snapshot {
+            modules: modules
                 .iter()
-                .map(|input| input.input.as_str())
-                .collect::<Vec<_>>(),
-            ["Module.name: Root", "Root.lean"]
-        );
-        assert_eq!(
-            change.current_metadata().unwrap().schema_version.as_deref(),
-            Some("1.2.0")
-        );
-        assert_eq!(change.current_metadata().unwrap().synthetic, Some(false));
-        assert!(change.previous_metadata().is_none());
+                .map(|(module, trace)| {
+                    (
+                        (*module).to_owned(),
+                        ModuleTrace {
+                            package: "root".to_owned(),
+                            trace: trace.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            warnings: Vec::new(),
+        }
+    }
 
-        let serialized = serde_json::to_value(change).unwrap();
-        assert_eq!(
-            serialized.as_object().unwrap().keys().collect::<Vec<_>>(),
-            ["inputs", "reason", "status", "target", "trace"]
-        );
-        assert!(serialized["inputs"].as_array().unwrap().is_empty());
+    fn causes(kind: InputKind, input: &str) -> Vec<Cause> {
+        vec![Cause {
+            kind,
+            input: input.to_owned(),
+        }]
     }
 
     #[test]
-    fn represents_an_unexplained_dependency_hash_change_as_opaque() {
-        let before = TraceSnapshot {
-            traces: [(
-                ".lake/build/Root.trace".to_owned(),
-                parse_trace(br#"{"depHash":"before","inputs":[["Root.lean","same"]]}"#).unwrap(),
-            )]
-            .into(),
-            warnings: Vec::new(),
-        };
-        let after = TraceSnapshot {
-            traces: [(
-                ".lake/build/Root.trace".to_owned(),
-                parse_trace(br#"{"depHash":"after","inputs":[["Root.lean","same"]]}"#).unwrap(),
-            )]
-            .into(),
-            warnings: Vec::new(),
-        };
+    fn parses_inputs_outputs_and_the_public_olean() {
+        let parsed = module_trace("aa", "src", &[("Dep", "d1")], "0123456789abcdef");
+        assert_eq!(parsed.dep_hash.as_deref(), Some("aa"));
+        assert_eq!(parsed.inputs["deps / imports / Dep:importArts"], "d1");
+        assert_eq!(parsed.olean.as_deref(), Some("0123456789abcdef.olean"));
+        assert!(parsed.outputs.contains("2222222222222222.ilean"));
+        assert!(parsed.outputs.contains("1111111111111111.olean.server"));
+        assert_eq!(parsed.imports().into_iter().collect::<Vec<_>>(), ["Dep"]);
 
-        let changes = before.changes_since(&after);
-        let opaque = changes[0].opaque_dep_hash_change().unwrap();
-        assert!(changes[0].inputs.is_empty());
-        assert_eq!(opaque.before.as_deref(), Some("before"));
-        assert_eq!(opaque.after.as_deref(), Some("after"));
+        let numeric = trace(json!({"depHash": 42, "outputs": 42}));
+        assert_eq!(numeric.dep_hash.as_deref(), Some("42"));
+        assert!(numeric.outputs.contains("000000000000002a.art"));
     }
 
     #[test]
-    fn preserves_modern_metadata_on_removed_traces() {
-        let before = TraceSnapshot {
-            traces: [(
-                ".lake/build/Root.trace".to_owned(),
-                parse_trace(
-                    br#"{
-                      "depHash":"before",
-                      "schemaVersion":4,
-                      "synthetic":true,
-                      "inputs":[]
-                    }"#,
-                )
-                .unwrap(),
-            )]
-            .into(),
-            warnings: Vec::new(),
-        };
-
-        let changes = before.changes_since(&TraceSnapshot::default());
-        assert_eq!(changes[0].status, TraceChangeStatus::Removed);
-        assert_eq!(
-            changes[0]
-                .previous_metadata()
-                .unwrap()
-                .schema_version
-                .as_deref(),
-            Some("4")
-        );
-        assert_eq!(
-            changes[0].previous_metadata().unwrap().synthetic,
-            Some(true)
-        );
-        assert!(changes[0].current_metadata().is_none());
+    fn classifies_inputs_by_lake_captions() {
+        for (label, kind) in [
+            ("/home/me/Mathlib/Data/Option/Basic.lean", InputKind::Source),
+            ("Module.name: Mathlib.Lean.Expr", InputKind::Configuration),
+            ("Package.id?: (some mathlib)", InputKind::Configuration),
+            ("isModule: true", InputKind::Configuration),
+            ("Lean 4.x, commit abc", InputKind::Toolchain),
+            ("options", InputKind::Options),
+            ("Module.leanArgs: #[]", InputKind::Options),
+            (
+                "deps / mathlib/cache:extraDep / @mathlib:extraDep",
+                InputKind::Dependency,
+            ),
+            ("libs / module dynlibs", InputKind::Libraries),
+            ("opaque key", InputKind::Other),
+        ] {
+            assert_eq!(classify(label), kind, "{label}");
+        }
     }
 
     #[test]
-    fn classifies_lake_owned_inputs_without_guessing_unknown_labels() {
+    fn reads_causes_from_changed_labels() {
+        let before = snapshot(&[
+            (
+                "Dep",
+                module_trace("d-before", "dep-src-1", &[], "aaaaaaaaaaaaaaaa"),
+            ),
+            (
+                "Root",
+                module_trace(
+                    "r-before",
+                    "root-src",
+                    &[("Dep", "dep-1")],
+                    "bbbbbbbbbbbbbbbb",
+                ),
+            ),
+            (
+                "Gone",
+                module_trace("g", "gone-src", &[], "cccccccccccccccc"),
+            ),
+        ]);
+        let after = snapshot(&[
+            (
+                "Dep",
+                module_trace("d-after", "dep-src-2", &[], "dddddddddddddddd"),
+            ),
+            (
+                "Root",
+                module_trace(
+                    "r-after",
+                    "root-src",
+                    &[("Dep", "dep-2")],
+                    "bbbbbbbbbbbbbbbb",
+                ),
+            ),
+            (
+                "Fresh",
+                module_trace("f", "fresh-src", &[], "eeeeeeeeeeeeeeee"),
+            ),
+        ]);
+
+        let comparison = compare(&before, &after);
+        assert_eq!(comparison.removed, ["Gone"]);
+        let by_module = comparison
+            .changes
+            .iter()
+            .map(|change| (change.module.as_str(), change))
+            .collect::<BTreeMap<_, _>>();
         assert_eq!(
-            classify_input("Lean 4.x, commit abc"),
-            TraceInputKind::Toolchain
+            by_module["Dep"].causes,
+            causes(InputKind::Source, "/project/Root.lean")
         );
-        assert_eq!(classify_input("Module.leanArgs"), TraceInputKind::Options);
-        assert_eq!(classify_input("opaque key"), TraceInputKind::Other);
+        assert_eq!(by_module["Root"].causes, causes(InputKind::Import, "Dep"));
+        assert!(!by_module["Root"].inferred);
+        assert_eq!(by_module["Fresh"].status, ChangeStatus::New);
+        assert!(by_module["Fresh"].causes.is_empty());
+    }
+
+    #[test]
+    fn does_not_list_every_label_when_the_previous_trace_came_from_a_cache() {
+        let before = snapshot(&[
+            ("Base", cached("base-1", "aaaaaaaaaaaaaaaa")),
+            ("Middle", cached("middle-1", "bbbbbbbbbbbbbbbb")),
+            ("Top", cached("top-1", "cccccccccccccccc")),
+            ("Other", cached("other-1", "eeeeeeeeeeeeeeee")),
+        ]);
+        let after = snapshot(&[
+            (
+                "Base",
+                module_trace("base-2", "base-src", &[], "dddddddddddddddd"),
+            ),
+            (
+                "Middle",
+                module_trace(
+                    "middle-2",
+                    "middle-src",
+                    &[("Base", "b2")],
+                    "bbbbbbbbbbbbbbbb",
+                ),
+            ),
+            (
+                "Top",
+                module_trace("top-2", "top-src", &[("Middle", "m2")], "cccccccccccccccc"),
+            ),
+            (
+                "Other",
+                module_trace("other-2", "other-src", &[], "eeeeeeeeeeeeeeee"),
+            ),
+        ]);
+
+        let comparison = compare(&before, &after);
+        let by_module = comparison
+            .changes
+            .iter()
+            .map(|change| (change.module.as_str(), change))
+            .collect::<BTreeMap<_, _>>();
+        assert!(by_module.values().all(|change| change.inferred));
+        assert!(by_module["Base"].causes.is_empty());
+        assert_eq!(
+            by_module["Middle"].causes,
+            causes(InputKind::Import, "Base")
+        );
+        // Middle's public olean did not change, but Base's did, two hops down.
+        assert_eq!(by_module["Top"].causes, causes(InputKind::Import, "Middle"));
+        assert!(by_module["Other"].causes.is_empty());
+    }
+
+    #[test]
+    fn a_new_toolchain_label_replaces_the_old_one() {
+        let before = snapshot(&[(
+            "Root",
+            trace(
+                json!({"depHash": "1", "inputs": [["Lean 4.x, commit old", "a"], ["/p/Root.lean", "s"]]}),
+            ),
+        )]);
+        let after = snapshot(&[(
+            "Root",
+            trace(
+                json!({"depHash": "2", "inputs": [["Lean 4.y, commit new", "b"], ["/p/Root.lean", "s"]]}),
+            ),
+        )]);
+        let comparison = compare(&before, &after);
+        assert_eq!(
+            comparison.changes[0].causes,
+            causes(InputKind::Toolchain, "Lean 4.y, commit new")
+        );
+    }
+
+    #[test]
+    fn references_fail_on_any_unreadable_trace_after_reading_the_rest() {
+        let temp = tempdir().unwrap();
+        let library = temp.path().join("lib/lean/Root");
+        fs::create_dir_all(&library).unwrap();
+        fs::write(
+            library.join("Basic.trace"),
+            br#"{"depHash":"aaaaaaaaaaaaaaaa","outputs":{"o":["0123456789abcdef.olean"]}}"#,
+        )
+        .unwrap();
+        let (mut hashes, mut artifacts) = Default::default();
+        collect_references(temp.path(), &mut hashes, &mut artifacts).unwrap();
+        assert_eq!(hashes.len(), 1);
+
+        fs::write(library.join("Broken.trace"), b"not json").unwrap();
+        fs::write(
+            library.join("Bare.trace"),
+            br#"{"outputs":"1111111111111111.olean"}"#,
+        )
+        .unwrap();
+        let (mut hashes, mut artifacts) = Default::default();
+        let error = collect_references(temp.path(), &mut hashes, &mut artifacts)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("cannot read 2 traces"), "{error}");
+        assert!(error.contains("Bare.trace has no depHash"), "{error}");
+        // What could be read is still collected.
+        assert!(hashes.contains("aaaaaaaaaaaaaaaa"));
+        assert!(artifacts.contains("1111111111111111.olean"));
+        // A build directory that does not exist has no references.
+        collect_references(&temp.path().join("absent"), &mut hashes, &mut artifacts).unwrap();
+    }
+
+    #[test]
+    fn captures_module_traces_of_every_package() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("root");
+        let dependency = temp.path().join("root/.lake/packages/dep");
+        let library = root.join(".lake/build/lib/lean/Root");
+        fs::create_dir_all(&library).unwrap();
+        fs::write(library.join("Basic.trace"), br#"{"depHash":"1"}"#).unwrap();
+        fs::write(library.join("Broken.trace"), b"not json").unwrap();
+        let dependency_library = dependency.join(".lake/build/lib/lean");
+        fs::create_dir_all(&dependency_library).unwrap();
+        fs::write(dependency_library.join("Dep.trace"), br#"{"depHash":"2"}"#).unwrap();
+        fs::write(dependency_library.join("Dep.olean"), b"not a trace").unwrap();
+
+        let snapshot = Snapshot::capture(&[
+            Package {
+                name: "root".to_owned(),
+                root,
+            },
+            Package {
+                name: "dep".to_owned(),
+                root: dependency,
+            },
+            Package {
+                name: "missing".to_owned(),
+                root: temp.path().join("missing"),
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            snapshot.modules.keys().collect::<Vec<_>>(),
+            ["Dep", "Root.Basic"]
+        );
+        assert_eq!(snapshot.modules["Dep"].package, "dep");
+        assert_eq!(snapshot.warnings.len(), 1);
+        assert!(
+            snapshot.warnings[0].contains("Broken.trace"),
+            "{:?}",
+            snapshot.warnings
+        );
     }
 }

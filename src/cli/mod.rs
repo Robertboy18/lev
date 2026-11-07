@@ -4,24 +4,22 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
-use clap_complete::Shell;
+use clap::{Args, Parser, Subcommand};
 
 mod cache;
-mod project;
-mod toolchain;
-mod tools;
+mod check;
+mod inspect;
 
 pub use cache::*;
-pub use project::*;
-pub use toolchain::*;
-pub use tools::*;
+pub use check::*;
+pub use inspect::*;
 
 #[derive(Debug, Parser)]
 #[command(
     name = "lev",
     version,
-    about = "Fast Lean toolchains, dependencies, and project environments",
+    about = "Explain Lake rebuilds, check modules with external kernels, prune caches, \
+             and report on a Lean setup",
     long_about = None,
     disable_help_subcommand = true,
     after_help = "Run `lev <command> --help` for command-specific options."
@@ -35,29 +33,13 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "PATH", hide_short_help = true)]
     pub cache_dir: Option<PathBuf>,
 
-    /// Override LEV_DATA_DIR for persistent toolchain objects.
-    #[arg(long, global = true, value_name = "PATH", hide_short_help = true)]
-    pub data_dir: Option<PathBuf>,
-
     /// Suppress lev's informational output.
     #[arg(short, long, global = true, conflicts_with = "verbose")]
     pub quiet: bool,
 
-    /// Show cache reuse and orchestration details.
+    /// Show the commands lev runs and the caches it reads.
     #[arg(short, long, global = true)]
     pub verbose: bool,
-
-    /// Hide progress updates for long operations.
-    #[arg(long, global = true, hide_short_help = true)]
-    pub no_progress: bool,
-
-    /// Run eligible commands in a persistent local workspace.
-    #[arg(long, global = true)]
-    pub local: bool,
-
-    /// Print elapsed time for the command and recorded execution phases.
-    #[arg(long, global = true)]
-    pub timings: bool,
 
     #[command(subcommand)]
     pub command: Command,
@@ -65,159 +47,25 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Create a standard Lake project pinned to a Lean toolchain.
-    Init(InitArgs),
-
-    /// Create or update the project environment from its locks.
-    Sync(SyncArgs),
-
-    /// Generate or verify base and version-specific dependency locks.
-    Lock(LockArgs),
-
-    /// Inspect and change project dependencies.
-    Deps(DepsArgs),
-
-    /// Analyze project state and explain recorded evidence.
+    /// Run a Lake build and explain what it rebuilt.
     Inspect(InspectArgs),
 
-    /// Operate on project pins, exports, archives, and releases.
-    #[command(name = "project", hide = true)]
-    ProjectState(ProjectArgs),
-
-    /// Add or replace a dependency in lakefile.toml.
-    #[command(hide = true)]
-    Add(AddArgs),
-
-    /// Remove a dependency from lakefile.toml.
-    #[command(hide = true)]
-    Remove(RemoveArgs),
-
-    /// Update locked dependencies through Lake.
-    #[command(hide = true)]
-    Update(UpdateArgs),
-
-    /// Synchronize, then run a command in the project's Lean environment.
-    Run(RunArgs),
-
-    /// Synchronize, then run `lake build`.
-    Build(BuildArgs),
-
-    /// Synchronize, then run the Lake test driver.
-    #[command(hide = true)]
-    Test(WorkflowArgs),
-
-    /// Install, list, and remove Lean toolchains.
-    Toolchain(ToolchainArgs),
-
-    /// Install and run Lean package executables outside a project.
-    #[command(hide = true)]
-    Tool(ToolArgs),
-
-    /// Inspect lev's shared caches.
-    Cache(CacheArgs),
-
-    /// Check the local Lean, Lake, Git, and cache configuration.
-    Doctor(InspectEnvironmentArgs),
-
-    /// Report newer Reservoir releases compatible with this Lean toolchain.
-    #[command(hide = true)]
-    Outdated(OutdatedArgs),
-
-    /// Upgrade direct dependencies using Reservoir compatibility metadata.
-    #[command(hide = true)]
-    Upgrade(UpgradeArgs),
-
-    /// Pin the project to a different Lean toolchain.
-    #[command(hide = true)]
-    Pin(PinArgs),
-
-    /// Make a resolved Lean environment the project's default.
-    #[command(hide = true)]
-    Use(UseArgs),
-
-    /// Synchronize, then run the Lake lint driver.
-    #[command(hide = true)]
-    Lint(WorkflowArgs),
-
-    /// Remove project build outputs through Lake.
-    #[command(hide = true)]
-    Clean(LakeArgs),
-
-    /// Verify a project or elaborate one Lean file.
+    /// Check every module with external kernels, reusing the verdicts of
+    /// modules whose slices did not change.
     Check(CheckArgs),
 
-    /// Infer and optionally apply minimal Lean imports.
-    #[command(name = "imports", hide = true)]
-    Imports(ShakeArgs),
+    /// Inventory and prune lev's caches and Lake's artifact cache.
+    Cache(CacheArgs),
 
-    /// Infer and optionally apply minimal Lean imports.
-    Shake(ShakeArgs),
+    /// Report the tools, toolchain, and caches a build or check depends on.
+    Doctor(DoctorArgs),
+}
 
-    /// Measure repeated execution of a command in the Lean environment.
-    Profile(LegacyProfileArgs),
-
-    /// Inspect the project's Lean module import graph.
-    #[command(hide = true)]
-    Graph(GraphArgs),
-
-    /// Verify locks, dependency integrity, builds, and optional policy gates.
-    Verify(VerifyArgs),
-
-    /// Create a deterministic archive of the locked project sources.
-    #[command(hide = true)]
-    Bundle(BundleArgs),
-
-    /// Rerun a command when project files change.
-    #[command(hide = true)]
-    Watch(WatchArgs),
-
-    /// Print the resolved dependency tree.
-    #[command(hide = true)]
-    Tree(TreeArgs),
-
-    /// Explain why a package is in the dependency graph.
-    #[command(hide = true)]
-    Why(WhyArgs),
-
-    /// Run or list commands configured in lev.toml.
-    #[command(hide = true)]
-    Task(TaskArgs),
-
-    /// Operate on all Lean projects declared in [workspace].
-    #[command(hide = true)]
-    Workspace(WorkspaceArgs),
-
-    /// Run or check one Lean file with inline dependency metadata.
-    #[command(hide = true)]
-    Script(ScriptArgs),
-
-    /// Optional CI: run one command against multiple Lean toolchains.
-    #[command(hide = true)]
-    Matrix(MatrixArgs),
-
-    /// Export the locked dependency inventory or a CycloneDX SBOM.
-    #[command(hide = true)]
-    Export(ExportArgs),
-
-    /// Audit local lock, toolchain, and dependency checkout integrity.
-    #[command(hide = true)]
-    Audit(AuditArgs),
-
-    /// Verify and upload Lake build artifacts to an existing GitHub release.
-    #[command(hide = true)]
-    Publish(PublishArgs),
-
-    /// Inspect, update, or uninstall the lev executable.
-    #[command(name = "self", hide = true)]
-    SelfManagement(SelfArgs),
-
-    /// Generate shell completion definitions.
-    #[command(hide = true)]
-    Completions {
-        /// Shell whose completion format should be generated.
-        #[arg(value_enum)]
-        shell: Shell,
-    },
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Print a machine-readable report.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Parse process arguments.
@@ -229,293 +77,166 @@ pub(crate) fn parse() -> Cli {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{Cli, Command, DepsCommand, InspectCommand, ProjectCommand};
+    use super::{CacheCommand, CheckKernel, Cli, Command, InspectCommand};
 
     #[test]
-    fn root_help_exposes_command_families_and_familiar_direct_commands() {
+    fn root_help_lists_exactly_the_kept_commands() {
         let mut command = Cli::command();
-        let visible = command
+        let names = command
             .get_subcommands()
-            .filter(|subcommand| !subcommand.is_hide_set())
             .map(|subcommand| subcommand.get_name().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(
-            visible,
-            [
-                "init",
-                "sync",
-                "lock",
-                "deps",
-                "inspect",
-                "run",
-                "build",
-                "toolchain",
-                "cache",
-                "doctor",
-                "check",
-                "shake",
-                "profile",
-                "verify",
-            ]
-        );
+        assert_eq!(names, ["inspect", "check", "cache", "doctor"]);
 
         let help = command.render_long_help().to_string();
-        for visible in ["doctor", "shake", "profile", "verify"] {
-            assert!(help.contains(&format!("  {visible} ")), "{help}");
-        }
-        for hidden in ["add", "graph", "imports", "workspace"] {
-            assert!(!help.contains(&format!("  {hidden} ")), "{help}");
+        for name in ["inspect", "check", "cache", "doctor"] {
+            assert!(help.contains(&format!("  {name} ")), "{help}");
         }
         assert!(!help.contains("  help "), "{help}");
     }
 
     #[test]
-    fn grouped_commands_and_direct_spellings_both_parse() {
-        let grouped = Cli::try_parse_from(["lev", "inspect", "performance"]).unwrap();
-        assert!(matches!(
-            grouped.command,
-            Command::Inspect(super::InspectArgs {
-                command: Some(InspectCommand::Performance(_)),
-                ..
-            })
-        ));
-        let legacy = Cli::try_parse_from(["lev", "profile"]).unwrap();
-        assert!(matches!(legacy.command, Command::Profile(_)));
-
-        let grouped =
-            Cli::try_parse_from(["lev", "inspect", "trust", "--deny", "sorryAx"]).unwrap();
-        assert!(matches!(
-            grouped.command,
-            Command::Inspect(super::InspectArgs {
-                command: Some(InspectCommand::Trust(super::InspectTrustArgs {
-                    denied_axioms,
-                    ..
-                })),
-                ..
-            }) if denied_axioms == ["sorryAx"]
-        ));
-
-        let grouped = Cli::try_parse_from(["lev", "deps", "add", "example"]).unwrap();
-        assert!(matches!(
-            grouped.command,
-            Command::Deps(super::DepsArgs {
-                command: Some(DepsCommand::Add(_)),
-                ..
-            })
-        ));
-        let legacy = Cli::try_parse_from(["lev", "add", "example"]).unwrap();
-        assert!(matches!(legacy.command, Command::Add(_)));
-
-        let grouped = Cli::try_parse_from(["lev", "project", "clean"]).unwrap();
-        assert!(matches!(
-            grouped.command,
-            Command::ProjectState(super::ProjectArgs {
-                command: ProjectCommand::Clean(_)
-            })
-        ));
-        let legacy = Cli::try_parse_from(["lev", "clean"]).unwrap();
-        assert!(matches!(legacy.command, Command::Clean(_)));
-
-        for args in [
-            &["lev", "tool", "list"][..],
-            &["lev", "self", "update", "--check"][..],
-            &["lev", "completions", "bash"][..],
-            &[
-                "lev",
-                "cache",
-                "remote",
-                "keygen",
-                "--private-key",
-                "private.key",
-                "--public-key",
-                "public.key",
-            ][..],
-            &[
-                "lev",
-                "toolchain",
-                "chunks",
-                "publish",
-                "leanprover/lean4:v4.test",
-                "remote",
-                "--signing-key",
-                "private.key",
-            ][..],
-            &[
-                "lev",
-                "toolchain",
-                "index",
-                "list",
-                "remote",
-                "--public-key",
-                "public.key",
-            ][..],
-        ] {
-            assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
-        }
-    }
-
-    #[test]
-    fn inspect_help_exposes_direct_topics_without_an_extra_code_layer() {
+    fn inspect_and_cache_have_one_spelling_per_command() {
         let mut command = Cli::command();
         let inspect = command
             .find_subcommand_mut("inspect")
             .expect("inspect command");
-        let visible = inspect
+        let topics = inspect
             .get_subcommands()
-            .filter(|subcommand| !subcommand.is_hide_set())
             .map(|subcommand| subcommand.get_name().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(
-            visible,
-            [
-                "build",
-                "dependencies",
-                "imports",
-                "graph",
-                "declaration",
-                "trust",
-                "performance",
-                "environment"
-            ]
-        );
+        assert_eq!(topics, ["build"]);
 
-        assert!(Cli::try_parse_from(["lev", "inspect", "imports", "--fix"]).is_ok());
-        assert!(Cli::try_parse_from(["lev", "inspect", "imports", "--fix", "--isolate"]).is_ok());
-        assert!(Cli::try_parse_from(["lev", "shake", "--fix"]).is_ok());
+        let cache = command.find_subcommand_mut("cache").expect("cache command");
+        let topics = cache
+            .get_subcommands()
+            .map(|subcommand| subcommand.get_name().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(topics, ["status", "gc"]);
     }
 
     #[test]
-    fn family_and_global_options_remain_usable_around_subcommands() {
+    fn inspect_build_passes_lake_arguments_through() {
+        let parsed = Cli::try_parse_from([
+            "lev", "inspect", "build", "--json", "--why", "Root.B", "--", "--old", "Root",
+        ])
+        .unwrap();
+        let Command::Inspect(inspect) = parsed.command else {
+            panic!("expected inspect");
+        };
+        let InspectCommand::Build(build) = inspect.command;
+        assert!(build.json);
+        assert_eq!(build.why.as_deref(), Some("Root.B"));
+        assert_eq!(build.args, ["--old", "Root"]);
+
+        let parsed = Cli::try_parse_from(["lev", "inspect", "build", "Root"]).unwrap();
+        let Command::Inspect(inspect) = parsed.command else {
+            panic!("expected inspect");
+        };
+        let InspectCommand::Build(build) = inspect.command;
+        assert_eq!(build.args, ["Root"]);
+    }
+
+    #[test]
+    fn check_takes_kernels_jobs_and_modules() {
+        let parsed = Cli::try_parse_from(["lev", "check"]).unwrap();
+        let Command::Check(check) = parsed.command else {
+            panic!("expected check");
+        };
+        assert!(check.kernels.is_empty());
+        assert_eq!(check.jobs, None);
+        assert_eq!(check.timeout, 3600);
+        assert!(!check.no_build && !check.no_sandbox && !check.json);
+
+        let parsed = Cli::try_parse_from([
+            "lev",
+            "check",
+            "--kernel",
+            "official",
+            "--kernel",
+            "nanoda",
+            "--jobs",
+            "4",
+            "--no-build",
+            "--no-sandbox",
+            "--json",
+            "--only",
+            "A.B",
+            "--only",
+            "C",
+            "--timeout",
+            "60",
+        ])
+        .unwrap();
+        let Command::Check(check) = parsed.command else {
+            panic!("expected check");
+        };
+        assert_eq!(check.kernels, [CheckKernel::Official, CheckKernel::Nanoda]);
+        assert_eq!(check.jobs, Some(4));
+        assert_eq!(check.only, ["A.B", "C"]);
+        assert_eq!(check.timeout, 60);
+        assert!(check.no_build && check.no_sandbox && check.json);
+
         for args in [
-            &["lev", "inspect", "--project", "/tmp", "environment"][..],
-            &["lev", "deps", "--timings", "list"][..],
-            &["lev", "deps", "--json", "list"][..],
-            &["lev", "inspect", "--json", "build"][..],
+            &["lev", "check", "--kernel", "lean4lean"][..],
+            &["lev", "check", "--jobs", "0"][..],
+            &["lev", "check", "Mathlib"][..],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn cache_gc_defaults_to_a_dry_run_with_a_thirty_day_gate() {
+        let parsed = Cli::try_parse_from(["lev", "cache", "gc"]).unwrap();
+        let Command::Cache(cache) = parsed.command else {
+            panic!("expected cache");
+        };
+        let CacheCommand::Gc(gc) = cache.command else {
+            panic!("expected gc");
+        };
+        assert_eq!(gc.max_age_days, 30);
+        assert!(!gc.apply);
+        assert!(!gc.json);
+        // Lake's caches are collected only when asked for.
+        assert!(!gc.lake);
+        let parsed = Cli::try_parse_from(["lev", "cache", "gc", "--lake"]).unwrap();
+        let Command::Cache(cache) = parsed.command else {
+            panic!("expected cache");
+        };
+        let CacheCommand::Gc(gc) = cache.command else {
+            panic!("expected gc");
+        };
+        assert!(gc.lake);
+    }
+
+    #[test]
+    fn global_options_work_around_subcommands() {
+        for args in [
+            &["lev", "--project", "/tmp", "doctor", "--json"][..],
+            &["lev", "doctor", "--project", "/tmp", "-v"][..],
+            &["lev", "cache", "--cache-dir", "/tmp/cache", "status"][..],
+            &["lev", "-q", "inspect", "build"][..],
         ] {
             assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
         }
+        assert!(Cli::try_parse_from(["lev", "-q", "-v", "doctor"]).is_err());
     }
 
     #[test]
-    fn every_grouped_flat_compatibility_spelling_still_parses() {
-        let pairs: &[(&[&str], &[&str])] = &[
-            (
-                &["lev", "deps", "add", "example"],
-                &["lev", "add", "example"],
-            ),
-            (
-                &["lev", "deps", "remove", "example"],
-                &["lev", "remove", "example"],
-            ),
-            (&["lev", "deps", "update"], &["lev", "update"]),
-            (&["lev", "deps", "outdated"], &["lev", "outdated"]),
-            (&["lev", "deps", "upgrade"], &["lev", "upgrade"]),
-            (&["lev", "deps", "tree"], &["lev", "tree"]),
-            (
-                &["lev", "deps", "why", "example"],
-                &["lev", "why", "example"],
-            ),
-            (&["lev", "inspect", "environment"], &["lev", "doctor"]),
-            (&["lev", "inspect", "performance"], &["lev", "profile"]),
-            (&["lev", "inspect", "imports"], &["lev", "shake"]),
-            (&["lev", "inspect", "imports"], &["lev", "imports"]),
-            (&["lev", "inspect", "graph"], &["lev", "graph"]),
-            (
-                &["lev", "project", "pin", "stable"],
-                &["lev", "pin", "stable"],
-            ),
-            (
-                &["lev", "project", "use", "stable"],
-                &["lev", "use", "stable"],
-            ),
-            (&["lev", "project", "clean"], &["lev", "clean"]),
-            (&["lev", "project", "export"], &["lev", "export"]),
-            (&["lev", "project", "audit"], &["lev", "audit"]),
-            (&["lev", "project", "bundle"], &["lev", "bundle"]),
-            (
-                &["lev", "project", "publish", "v1.0.0"],
-                &["lev", "publish", "v1.0.0"],
-            ),
-        ];
-
-        for (grouped, flat) in pairs {
-            assert!(Cli::try_parse_from(*grouped).is_ok(), "{grouped:?}");
-            assert!(Cli::try_parse_from(*flat).is_ok(), "{flat:?}");
-        }
-
-        for published in [
-            &["lev", "verify"][..],
-            &["lev", "test"][..],
-            &["lev", "lint"][..],
-            &["lev", "watch"][..],
-            &["lev", "workspace", "list"][..],
+    fn deleted_commands_and_flags_no_longer_parse() {
+        for args in [
+            &["lev", "sync"][..],
+            &["lev", "build"][..],
+            &["lev", "shake"][..],
+            &["lev", "inspect", "graph"][..],
+            &["lev", "inspect", "environment"][..],
+            &["lev", "cache", "dir"][..],
+            &["lev", "--local", "doctor"][..],
+            &["lev", "--timings", "doctor"][..],
+            &["lev", "doctor", "--output", "report.json"][..],
         ] {
-            assert!(Cli::try_parse_from(published).is_ok(), "{published:?}");
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
         }
-    }
-
-    #[test]
-    fn check_parses_explicit_and_legacy_file_modes_and_positional_targets() {
-        let project = Cli::try_parse_from(["lev", "check", "--json"]).unwrap();
-        assert!(matches!(
-            project.command,
-            Command::Check(super::CheckArgs { file: None, .. })
-        ));
-
-        let file =
-            Cli::try_parse_from(["lev", "check", "--file", "Root.lean", "--no-sync"]).unwrap();
-        assert!(matches!(
-            file.command,
-            Command::Check(super::CheckArgs {
-                file: Some(_),
-                no_sync: true,
-                ..
-            })
-        ));
-
-        let target = Cli::try_parse_from(["lev", "check", "MyLibrary", "--task", "test"]).unwrap();
-        assert!(matches!(
-            target.command,
-            Command::Check(super::CheckArgs {
-                file: None,
-                first_arg: Some(first_arg),
-                tasks,
-                ..
-            }) if first_arg == "MyLibrary" && tasks == ["test"]
-        ));
-
-        let legacy =
-            Cli::try_parse_from(["lev", "check", "Root.lean", "--no-sync", "--offline"]).unwrap();
-        assert!(matches!(
-            legacy.command,
-            Command::Check(super::CheckArgs {
-                file: None,
-                no_sync: true,
-                ..
-            })
-        ));
-
-        let legacy_with_lean_flag =
-            Cli::try_parse_from(["lev", "check", "Root.lean", "-Dpp.universes=true"]).unwrap();
-        assert!(matches!(
-            legacy_with_lean_flag.command,
-            Command::Check(super::CheckArgs {
-                first_arg: Some(first_arg),
-                args,
-                ..
-            }) if first_arg == "Root.lean" && args == ["-Dpp.universes=true"]
-        ));
-
-        let explicit_with_lean_flag =
-            Cli::try_parse_from(["lev", "check", "--file", "Root.lean", "-Dpp.universes=true"])
-                .unwrap();
-        assert!(matches!(
-            explicit_with_lean_flag.command,
-            Command::Check(super::CheckArgs {
-                file: Some(_),
-                first_arg: Some(first_arg),
-                ..
-            }) if first_arg == "-Dpp.universes=true"
-        ));
     }
 }

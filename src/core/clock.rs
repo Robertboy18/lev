@@ -1,38 +1,29 @@
-//! Wall-clock helpers for cache timestamps.
+//! Wall-clock helpers for cache ages.
 //!
-//! Unknown or pre-epoch times map to zero, which keeps age-based cleanup
-//! conservative.
+//! Unknown or pre-epoch times map to zero, so an unreadable time makes an entry
+//! look old rather than new; callers pair this with reachability checks.
 
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use anyhow::Result;
-
-use crate::core::atomic_file;
 
 /// Current Unix time in whole seconds, saturating at the epoch.
 pub(crate) fn now_seconds() -> u64 {
     since_epoch(SystemTime::now()).as_secs()
 }
 
-/// Current Unix time in nanoseconds, saturating at the epoch.
-pub(crate) fn now_nanos() -> u128 {
-    since_epoch(SystemTime::now()).as_nanos()
-}
-
-/// A path's modification time in seconds, or epoch zero when unavailable.
+/// A path's modification time in seconds, or zero when unavailable.
 pub(crate) fn modified_seconds(path: &Path) -> u64 {
-    fs::metadata(path)
+    fs::symlink_metadata(path)
         .and_then(|metadata| metadata.modified())
         .map(since_epoch)
         .unwrap_or(Duration::ZERO)
         .as_secs()
 }
 
-/// Atomically record the current Unix timestamp in a cache marker.
-pub(crate) fn write_timestamp(path: &Path) -> Result<()> {
-    atomic_file::replace(path, format!("{}\n", now_seconds()).as_bytes())
+/// The Unix time `days` days before now.
+pub(crate) fn cutoff(days: u64) -> u64 {
+    now_seconds().saturating_sub(days.saturating_mul(86_400))
 }
 
 fn since_epoch(time: SystemTime) -> Duration {

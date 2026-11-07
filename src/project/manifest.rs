@@ -1,19 +1,18 @@
-//! Parsing and safety checks for `lake-manifest.json`.
+//! The parts of `lake-manifest.json` that locate a workspace's packages.
 //!
-//! Names, revisions, and paths are validated before reaching Git or the filesystem.
+//! Package names and paths are checked before they are joined onto the
+//! project root.
 
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+use super::Package;
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct LakeManifest {
-    #[serde(default)]
-    pub version: Option<serde_json::Value>,
-
     #[serde(rename = "packagesDir", default = "default_packages_dir")]
     pub packages_dir: PathBuf,
 
@@ -24,7 +23,7 @@ pub struct LakeManifest {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ManifestPackage {
     pub name: String,
 
@@ -32,43 +31,10 @@ pub struct ManifestPackage {
     pub kind: String,
 
     #[serde(default)]
-    pub url: Option<String>,
-
-    #[serde(default)]
-    pub rev: Option<String>,
-
-    #[serde(default)]
-    pub scope: Option<String>,
-
-    #[serde(rename = "inputRev", default)]
-    pub input_rev: Option<String>,
-
-    #[serde(default)]
-    pub inherited: bool,
+    pub dir: Option<PathBuf>,
 
     #[serde(rename = "subDir", default)]
     pub sub_dir: Option<PathBuf>,
-
-    #[serde(default)]
-    pub dir: Option<PathBuf>,
-
-    #[serde(rename = "manifestFile", default)]
-    pub manifest_file: Option<PathBuf>,
-
-    #[serde(rename = "configFile", default)]
-    pub config_file: Option<PathBuf>,
-}
-
-#[derive(Debug)]
-pub struct GitPackage<'a> {
-    /// Name exactly as serialized by Lake, retained for diagnostics.
-    pub name: &'a str,
-    /// Filesystem directory selected by Lake's `Name.toString (escape := false)`.
-    pub dir_name: String,
-    pub url: &'a str,
-    pub rev: &'a str,
-    /// Symbolic selector Lake resolved, such as a branch or release tag.
-    pub input_rev: Option<&'a str>,
 }
 
 impl LakeManifest {
@@ -98,50 +64,46 @@ impl LakeManifest {
         Ok(project_root.join(relative))
     }
 
-    pub fn git_packages(&self) -> Result<Vec<GitPackage<'_>>> {
-        let mut names = HashSet::new();
-        let mut packages = Vec::new();
-        for package in self.packages.iter().filter(|package| package.kind == "git") {
-            let dir_name = package_directory_name(&package.name)?;
-            if !names.insert(dir_name.clone()) {
-                bail!(
-                    "duplicate git package directory in lake-manifest.json: {}",
-                    package.name
-                );
-            }
-            let url = package
-                .url
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .with_context(|| {
-                    format!(
-                        "git package {} has no URL in lake-manifest.json",
-                        package.name
-                    )
-                })?;
-            let rev = package
-                .rev
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .with_context(|| {
-                    format!(
-                        "git package {} has no revision in lake-manifest.json",
-                        package.name
-                    )
-                })?;
-            validate_revision(&package.name, rev)?;
-            packages.push(GitPackage {
-                name: &package.name,
-                dir_name,
-                url,
-                rev,
-                input_rev: package
-                    .input_rev
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty()),
-            });
-        }
-        Ok(packages)
+    /// The directory of every listed package, in manifest order.
+    ///
+    /// Git packages live in `packagesDir` under their unescaped name; path
+    /// packages live at their `dir`, relative to the project root.
+    pub fn package_roots(&self, project_root: &Path) -> Result<Vec<Package>> {
+        let packages_dir = self.packages_path(project_root)?;
+        self.packages
+            .iter()
+            .map(|package| {
+                let mut root = if package.kind == "path" {
+                    let dir = package.dir.as_deref().with_context(|| {
+                        format!(
+                            "path package {} has no dir in lake-manifest.json",
+                            package.name
+                        )
+                    })?;
+                    project_root.join(dir)
+                } else {
+                    packages_dir.join(package_directory_name(&package.name)?)
+                };
+                if let Some(sub_dir) = &package.sub_dir {
+                    if sub_dir.as_os_str().is_empty()
+                        || !sub_dir.components().all(|component| {
+                            matches!(component, Component::Normal(_) | Component::CurDir)
+                        })
+                    {
+                        bail!(
+                            "package {} has an unsafe subDir in lake-manifest.json: {}",
+                            package.name,
+                            sub_dir.display()
+                        );
+                    }
+                    root.push(sub_dir);
+                }
+                Ok(Package {
+                    name: package.name.clone(),
+                    root,
+                })
+            })
+            .collect()
     }
 }
 
@@ -149,14 +111,12 @@ fn default_packages_dir() -> PathBuf {
     PathBuf::from(".lake/packages")
 }
 
-/// Convert Lake's JSON `Name` spelling into its materialized directory name.
+/// Convert Lake's JSON `Name` spelling into its checkout directory name.
 ///
-/// Lake serializes names with source-level `«...»` escaping but explicitly
-/// disables that escaping when choosing the checkout directory. Dots inside a
-/// quoted component remain literal dots in the resulting single directory
-/// name. Parsing this representation, instead of trimming only the outer
-/// quotes, also handles names such as `scope.«package-name»`.
-pub(crate) fn package_directory_name(name: &str) -> Result<String> {
+/// Lake writes names with source-level `«...»` escaping but disables that
+/// escaping when it picks the directory, so `scope.«package-name»` is checked
+/// out at `scope.package-name`.
+fn package_directory_name(name: &str) -> Result<String> {
     if name.is_empty() || name == "[anonymous]" {
         bail!("unsafe package name in lake-manifest.json: {name:?}");
     }
@@ -203,17 +163,6 @@ pub(crate) fn package_directory_name(name: &str) -> Result<String> {
     Ok(directory)
 }
 
-pub(crate) fn validate_package_name(name: &str) -> Result<()> {
-    package_directory_name(name).map(|_| ())
-}
-
-pub(crate) fn validate_revision(package: &str, revision: &str) -> Result<()> {
-    if !crate::core::hex::is_git_object_id(revision) {
-        bail!("git package {package} has a non-canonical locked revision: {revision:?}");
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -221,10 +170,11 @@ mod tests {
     use super::{LakeManifest, package_directory_name};
 
     #[test]
-    fn parses_current_lake_manifest_shape() {
+    fn reads_the_current_lake_manifest_shape() {
         let manifest: LakeManifest = serde_json::from_str(
             r#"{
                 "version": "1.2.0",
+                "name": "root",
                 "packagesDir": ".lake/packages",
                 "packages": [
                     {
@@ -233,34 +183,16 @@ mod tests {
                         "url": "https://example.invalid/solver.git",
                         "rev": "0123456789abcdef0123456789abcdef01234567"
                     },
-                    {
-                        "name": "local",
-                        "type": "path"
-                    }
+                    {"name": "local", "type": "path", "dir": "vendor/local"}
                 ]
             }"#,
         )
         .unwrap();
 
-        assert_eq!(
-            manifest.packages_path(Path::new("/project")).unwrap(),
-            Path::new("/project/.lake/packages")
-        );
-        let packages = manifest.git_packages().unwrap();
-        assert_eq!(packages.len(), 1);
-        assert_eq!(packages[0].name, "solver");
-        assert_eq!(packages[0].dir_name, "solver");
-        assert_eq!(packages[0].input_rev, None);
-
-        let legacy: LakeManifest = serde_json::from_str(
-            r#"{
-                "version": 7,
-                "packagesDir": ".lake/packages",
-                "packages": []
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(legacy.version, Some(serde_json::json!(7)));
+        let roots = manifest.package_roots(Path::new("/project")).unwrap();
+        assert_eq!(roots[0].root, Path::new("/project/.lake/packages/solver"));
+        assert_eq!(roots[1].root, Path::new("/project/vendor/local"));
+        assert_eq!(manifest.name.as_deref(), Some("root"));
     }
 
     #[test]
@@ -268,26 +200,19 @@ mod tests {
         let manifest: LakeManifest =
             serde_json::from_str(r#"{"packagesDir":"../shared","packages":[]}"#).unwrap();
         assert!(manifest.packages_path(Path::new("/project")).is_err());
+
+        let manifest: LakeManifest =
+            serde_json::from_str(r#"{"packages":[{"name":"../victim","type":"git"}]}"#).unwrap();
+        assert!(manifest.package_roots(Path::new("/project")).is_err());
+
+        let manifest: LakeManifest =
+            serde_json::from_str(r#"{"packages":[{"name":"dep","type":"git","subDir":"../up"}]}"#)
+                .unwrap();
+        assert!(manifest.package_roots(Path::new("/project")).is_err());
     }
 
     #[test]
-    fn rejects_package_name_traversal() {
-        let manifest: LakeManifest = serde_json::from_str(
-            r#"{
-                "packages": [{
-                    "name": "../victim",
-                    "type": "git",
-                    "url": "https://example.invalid/repo",
-                    "rev": "abc"
-                }]
-            }"#,
-        )
-        .unwrap();
-        assert!(manifest.git_packages().is_err());
-    }
-
-    #[test]
-    fn converts_escaped_lean_names_to_safe_lake_directories() {
+    fn converts_escaped_lean_names_to_lake_directories() {
         assert_eq!(
             package_directory_name("«documentation-tool»").unwrap(),
             "documentation-tool"

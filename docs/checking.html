@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="lev check exports every module once, checks each module's slice with external kernels, and rechecks only the slices an edit changes.">
+    <title>Checking | lev documentation</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script defer src="vendor/highlight.min.js"></script>
+    <script defer src="vendor/highlightjs-lean.min.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body data-page="checking">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="topbar">
+      <a class="brand" href="index.html" aria-label="lev documentation home"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button>
+      <nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav>
+    </header>
+    <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
+    <div class="docs-shell">
+      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+        <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
+        <div class="nav-group"><p class="nav-group-title">Guides</p><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="checking.html" data-page-link="checking">Checking</a><a href="cache.html" data-page-link="cache">Cache</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+      </nav></div></aside>
+      <main id="main-content"><div class="article-shell"><article class="article">
+        <header class="page-header"><p class="eyebrow">Guide</p><h1>Checking with external kernels</h1><p class="lead"><code>lev check</code> exports every module once, checks each module as its own slice with the toolchain's external kernels, keeps every verdict under the slice's content hash, and checks that the per-module results compose. After an edit it rechecks only the slices the edit changed.</p></header>
+
+        <section id="what"><h2>What lev check does</h2>
+          <div class="command-block"><div class="command-label">Terminal</div><pre><code>lev check
+lev check --kernel official --kernel nanoda --jobs 16
+lev check --no-build --only Mathlib.Order.Basic
+lev check --json &gt; check.json</code></pre></div>
+          <ol>
+            <li>Unless <code>--no-build</code> is given, it runs <code>lake build</code> through elan in the project.</li>
+            <li>It builds lev-export, the per-module exporter in lev's repository under <code>lean/export</code>, once per toolchain. lev carries the exporter's sources, writes them to its cache with a <code>lean-toolchain</code> naming the project's toolchain, and runs <code>lake build</code> there through elan. The build is keyed by the toolchain and a hash of the sources.</li>
+            <li>It exports the toolchain's own <code>Init</code> with lev-export, with <code>LEAN_PATH</code> set to the toolchain's <code>lib/lean</code> only, once per exporter build. This is the reference: the kernel's built-in constants and the standard axioms of the project must match it.</li>
+            <li>It asks Lake for the modules of the root package's default targets (<code>lake query --json :defaultModules</code>, the modules <code>lake check</code> exports) and runs <code>lake env lev-export --out DIR --jobs N MODULES</code> in the project. lev-export imports them once and writes one LeanExport 3.1.0 file per module of the import closure, Init, Std and every dependency included. Each file holds only that module's own constants and, for files of Lean's module system, which of them importers see without a body.</li>
+            <li>For every module and kernel it builds the module's slice, looks the verdict up under the kernel's identity and the slice's key, and runs the kernel on a slice file only when there is no verdict yet. Accept and reject verdicts are cached; errors and timeouts are not.</li>
+            <li>It runs the composition check over all results and prints the verdict.</li>
+          </ol>
+          <p>The project is registered for <a href="cache.html">cache collection</a> on every run. <code>--only MODULE</code> checks the named modules, their imports, and the owners of the constants their slices use, which is what the named modules' verdicts depend on.</p>
+        </section>
+
+        <section id="slices"><h2>Slices and views</h2>
+          <p>A slice is one module's own constants in full, plus the closure of what they reference. In the slice, an imported theorem or opaque is an axiom with the same name, universe parameters and type. Every other imported constant appears in full, with what its type and value reference; inductive types come with their constructors and recursors, and the quotient package comes with <code>Eq</code> ahead of it. The kernel's built-ins (<code>Nat</code> and its arithmetic, <code>String.ofList</code>, <code>Char.ofNat</code>, <code>Eq</code>, <code>Quot</code> and the rest of Lake's <code>primitiveTargets</code>) are always copied in full and never become axioms. Neither does anything they or the standard axioms depend on in the toolchain's <code>Init</code>, such as <code>Nat.bitwise</code>, through which <code>Nat.land</code> is defined.</p>
+          <p>A slice is checked in up to three views, in this order, until a kernel accepts:</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">View</th><th scope="col">Axioms in the slice</th></tr></thead><tbody>
+            <tr><th scope="row"><code>exported</code></th><td>Imported theorems and opaques, and imported definitions that the module system hides from importers. This is what a module file saw when it was built.</td></tr>
+            <tr><th scope="row"><code>theorems</code></th><td>Imported theorems and opaques only.</td></tr>
+            <tr><th scope="row"><code>closure</code></th><td>None: every import appears in full.</td></tr>
+          </tbody></table></div>
+          <p>For a module file Lean itself stores imported theorems without their proofs, so <code>lake build</code> already elaborated the module's constants against axiomized imports, and the exported view is usually enough. Modules with <code>import all</code> and files outside the module system can need a larger view; those are listed as fallbacks.</p>
+          <p>The slice key is a SHA-256 hash over the export format, the Lean commit, the view and the sorted entries of the slice: each constant's name, role (own, full or axiom), kind and hash. Own and full entries carry a hash of the whole declaration, axiom entries a hash of the name, universe parameters and type only. The hashes ignore what kernels ignore and what exports vary on (binder names, binder info, metadata, file-local indices, record order) and keep everything else. So:</p>
+          <ul>
+            <li>A new proof of the same statement changes the module's own slice, and the slices of importers that needed the closure view, because a closure slice copies imported theorem bodies. Importers checked in the exported or theorems view see the theorem as an axiom of the same type, and their slices keep their keys.</li>
+            <li>A new statement changes the slices of the importers that use the theorem.</li>
+            <li>A changed definition changes every slice that copies it in full.</li>
+          </ul>
+        </section>
+
+        <section id="composition"><h2>The composition check</h2>
+          <p>Each slice is checked on its own. A small linker then decides whether the accepted slices make up one well-typed environment. It accepts the development when all of these hold:</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Rule</th><th scope="col">Requirement</th></tr></thead><tbody>
+            <tr><th scope="row">L1</th><td>Every referenced constant has an owner. Only theorems with equal types may have several owners; Lean allows the same theorem in several modules.</td></tr>
+            <tr><th scope="row">L2</th><td>Every axiom in a slice has an owner that declares a theorem or opaque (or, in the exported view, a hidden definition) with the same type, and the owner's slice was accepted by the same kernel.</td></tr>
+            <tr><th scope="row">L3</th><td>Every full copy has the owner's kind and full hash.</td></tr>
+            <tr><th scope="row">L4</th><td>No cycle in the graph "a slice copies a constant owned by another module".</td></tr>
+            <tr><th scope="row">L5</th><td>Every slice is accepted by every selected kernel.</td></tr>
+            <tr><th scope="row">L6</th><td>The real axioms in use are <code>propext</code>, <code>Classical.choice</code> and <code>Quot.sound</code>, each identical to the reference's. Every axiom declaration in use is checked, and names are compared component by component, so <code>«Classical.choice»</code> is not <code>Classical.choice</code>.</td></tr>
+            <tr><th scope="row">L7</th><td>The kernel's built-ins, the standard axioms and everything their types and values depend on in the reference are identical to the reference's wherever the development declares them, and are never axiomized.</td></tr>
+            <tr><th scope="row">L8</th><td>Every module comes from the same toolchain and exporter, every import is listed before its importer, and the reference belongs to the same toolchain.</td></tr>
+          </tbody></table></div>
+          <p>The argument goes by induction over an order of the slices that L4 guarantees: when a slice is reached, every constant it took as an axiom is owned by an earlier slice whose check established its proof (L2, L5), and every constant it copied is the owner's (L3). Replacing an axiom by a theorem with a well-typed proof of the same type keeps every derivation valid. It assumes that each kernel is sound for what it accepts, that lev-export reports the <code>.olean</code> files faithfully (the trust <code>lake check</code> puts in <code>leanexport</code>), and that SHA-256 has no collisions.</p>
+        </section>
+
+        <section id="kernels"><h2>Kernels</h2>
+          <div class="table-wrap"><table><thead><tr><th scope="col"><code>--kernel</code></th><th scope="col">Binary</th><th scope="col">Notes</th></tr></thead><tbody>
+            <tr><th scope="row"><code>official</code> (default)</th><td><code>leanchecker --from-export</code></td><td>Lean's C++ kernel through <code>Lean.Replay</code>, with <code>LEAN_ABORT_ON_PANIC=1</code>.</td></tr>
+            <tr><th scope="row"><code>paranoid</code></th><td><code>leanchecker-paranoid --from-export</code></td><td>The same checker, linked statically.</td></tr>
+            <tr><th scope="row"><code>nanoda</code></th><td><code>nanoda_bin</code></td><td>An independent kernel in Rust. Its configuration permits exactly the standard axioms, the slice's axiomized imports and the module's own axioms.</td></tr>
+          </tbody></table></div>
+          <p>Repeat <code>--kernel</code> to require several kernels; every slice must then be accepted by each. A kernel's identity is the SHA-256 hash of its binary (for <code>leanchecker</code> also of the toolchain's shared libraries, <code>.so</code>, <code>.dylib</code> or <code>.dll</code>) and of how lev runs it, so a new toolchain gets new verdicts. lean4lean is not offered: the bundled version validates the kernel's primitive definitions against templates that need helper constants a slice does not contain, so it rejects most slices. The verified kernels con-leche and con-ron decline every slice, because they reject non-standard axioms and an axiomized import is one.</p>
+        </section>
+
+        <section id="sandbox"><h2>Sandbox</h2>
+          <p>Loading an <code>.olean</code> file is running untrusted input, so everything after the build runs in the same <code>bwrap</code> sandbox <code>lake check</code> uses for its kernels: <code>lake query</code>, <code>lake env lev-export</code>, the reference export and every kernel run. <code>/</code> is read-only, <code>/home</code>, <code>/root</code>, <code>/run</code>, <code>/tmp</code> and <code>/var</code> are covered, the toolchain, the project and its package directories are bound back read-only, only the export directory is writable, the environment is cleared, every namespace including the network is unshared, and core dumps are off. <code>--no-sandbox</code> runs them directly.</p>
+          <p><code>lake build</code> is not sandboxed. It runs the project's Lakefile and build with your permissions, as running <code>lake build</code> yourself would. With <code>--no-build</code>, lev runs no project code outside the sandbox.</p>
+        </section>
+
+        <section id="numbers"><h2>Measured on Mathlib</h2>
+          <p>Mathlib at commit <code>ae9dcc7a4b</code>, Lean <code>v4.36.0-rc2</code>, on a 96-core Linux machine:</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Run</th><th scope="col">Time</th></tr></thead><tbody>
+            <tr><th scope="row">What <code>lake check</code> runs: <code>leanexport</code> of Mathlib, then <code>leanchecker</code> on the full export</th><td>7:04 plus 52:37, single-threaded</td></tr>
+            <tr><th scope="row">lev-export of all 11,136 modules, 16 jobs</th><td>26 s</td></tr>
+            <tr><th scope="row">Cold <code>lev check</code>, official kernel, 32 jobs</th><td>5:44</td></tr>
+          </tbody></table></div>
+          <p>The cold run spends about three times the kernel time of the single full check, because every slice rechecks the imported definitions it copies. Warm runs over 20 consecutive Mathlib master commits:</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Commit</th><th scope="col">Slices rechecked</th><th scope="col">Checking</th></tr></thead><tbody>
+            <tr><th scope="row">Typical commits</th><td>1 to 7</td><td>about 19 to 21 s</td></tr>
+            <tr><th scope="row">The <code>nnnorm</code> to <code>nnNorm</code> rename (174 files)</th><td>791</td><td>76 s</td></tr>
+            <tr><th scope="row">A definition change</th><td>222</td><td>31 s</td></tr>
+            <tr><th scope="row">A Batteries bump</th><td>11</td><td></td></tr>
+          </tbody></table></div>
+          <p>The checking times do not include the export, which runs in full every time. With every verdict cached, <code>lev check --no-build --jobs 4</code> on the same checkout took 2:26: 84 s for the sandboxed export of all 11,136 modules and 60 s to read, hash, look up and link, with no kernel run.</p>
+        </section>
+
+        <section id="limits"><h2>Limits</h2>
+          <ul>
+            <li><strong>This is not a replacement for the trust model of <code>lake check</code></strong> in one respect: whether the slices compose is decided by lev's own small linker, not by a proved theorem. con-leche PR #13 (Joachim Breitner, open) checks module by module with a proved composition theorem. The verified kernels con-leche and con-ron cannot check lev's slices, because they reject non-standard axioms.</li>
+            <li>lev-export is written against Lean's import internals and LeanExport format 3.1.0. It was built and tested with <code>v4.36.0-rc2</code>; with a toolchain whose API differs it does not build, and <code>lev check</code> exits 2.</li>
+            <li>The kernels still unfold theorem bodies. A slice whose check needs an imported proof, for example to reduce <code>Acc.rec</code> on it, is rejected in the smaller views and falls back to a larger one.</li>
+            <li><code>Lean.Replay</code> in <code>leanchecker</code> orders declarations by constant references only, so a declaration with a string literal can reach the kernel before <code>String.ofList</code>. Such modules pass only in the closure view. On Mathlib this happened for 7 modules.</li>
+            <li>Only the checking is incremental. Every run exports the whole import closure again, and the export of Mathlib takes 6.9 GB of scratch space in lev's cache while the run lasts.</li>
+            <li>Verdicts are trusted cache entries. Anyone who can write to lev's cache directory can plant one.</li>
+            <li>The sandbox needs <code>bwrap</code>, so it works on Linux. Elsewhere pass <code>--no-sandbox</code>. Kernels run through <code>/bin/sh</code>, so Windows is not supported.</li>
+          </ul>
+        </section>
+
+        <section id="output"><h2>Output and exit status</h2>
+          <div class="command-block output-block"><div class="command-label">lev check after a proof edit in a three-module library</div><pre><code>accept: 4 of 4 modules checked with official
+slices: 1 checked, 3 reused
+axioms: Classical.choice, Quot.sound
+time: build 0.2 s, export 0.4 s, check 1.8 s (kernels 0.1 s summed)</code></pre></div>
+          <p>The fourth module is <code>Init.Prelude</code>, which the library's files import. The text summary says the verdict, how many slices were checked and reused, the fallbacks, the axioms in use and where the time went. A rejection lists the broken rules and the last line of each kernel's message. When a kernel run ends in an error, a timeout or a decline, the verdict is <code>unknown</code> and the summary lists the modules lev could not check. <code>--json</code> prints the envelope <code>lev.cli.check/v2</code>, whose data holds <code>project</code>, <code>toolchain</code>, <code>built</code>, <code>sandboxed</code>, <code>roots</code>, <code>exporter</code>, <code>reference</code>, <code>seconds</code> and <code>check</code>, the engine's full report (<code>lev-check/1</code>: verdict, kernels, slice counts, verdicts per view, fallbacks, rejections, the modules it could not check, axioms, violations, timings, and every attempt per module and kernel). Exit status 0 means accepted. 1 means rejected: a kernel rejected a slice in every view, or a linker rule failed. 2 means lev could not finish the check: no project, a failed build, a missing tool, an exporter that does not build, or a kernel run that ended in an error, a timeout or a decline. A rejection found alongside such a run still exits 1. Progress and errors go to stderr.</p>
+        </section>
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="inspection.html"><small>Previous</small><strong>Inspection</strong></a><a href="cache.html"><small>Next</small><strong>Cache</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#what">What lev check does</a><a href="#slices">Slices and views</a><a href="#composition">The composition check</a><a href="#kernels">Kernels</a><a href="#sandbox">Sandbox</a><a href="#numbers">Measured on Mathlib</a><a href="#limits">Limits</a><a href="#output">Output and exit status</a></nav></div></main>
+    </div>
+  </body>
+</html>

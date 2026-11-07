@@ -1,6 +1,4 @@
-//! Arguments for local and remote cache lifecycle commands.
-
-use std::path::PathBuf;
+//! Arguments for `lev cache`.
 
 use clap::{Args, Subcommand};
 
@@ -12,158 +10,39 @@ pub struct CacheArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CacheCommand {
-    /// Print the active cache directory.
-    Dir,
+    /// Inventory lev's cache and the Lake caches of registered projects.
+    ///
+    /// Exits with status 1 when a local Lake mapping names a missing artifact.
+    Status(CacheStatusArgs),
 
-    /// Show cache size and mirror counts.
-    Status,
-
-    /// Verify project records and Git mirror object databases.
-    Verify {
-        /// Run full Git object verification instead of connectivity checks.
-        #[arg(long)]
-        full: bool,
-    },
-
-    /// Report or remove unreferenced cache entries.
-    Gc {
-        /// Minimum age of unreferenced entries.
-        #[arg(long, default_value_t = 30, value_name = "DAYS")]
-        max_age_days: u64,
-
-        /// Delete reported entries.
-        #[arg(long)]
-        apply: bool,
-    },
-
-    /// Inspect and collect Lake's trace-keyed artifact store.
-    Artifacts {
-        #[command(subcommand)]
-        command: ArtifactCacheCommand,
-    },
-
-    /// Push and pull authenticated Lake artifact snapshots.
-    #[command(hide = true)]
-    Remote {
-        #[command(subcommand)]
-        command: RemoteCacheCommand,
-    },
+    /// Report or remove lev's unused cache entries, and with --lake the Lake
+    /// cache entries that no registered project references.
+    Gc(CacheGcArgs),
 }
 
-#[derive(Debug, Subcommand)]
-pub enum ArtifactCacheCommand {
-    /// Show artifact, mapping, hard-link, and orphan counts.
-    Status {
-        /// Limit inspection to one Lean toolchain.
-        #[arg(long, value_name = "TOOLCHAIN")]
-        toolchain: Option<String>,
-
-        /// Print machine-readable JSON.
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Validate mappings and check that local outputs exist.
-    Verify {
-        /// Limit verification to one Lean toolchain.
-        #[arg(long, value_name = "TOOLCHAIN")]
-        toolchain: Option<String>,
-
-        /// Print machine-readable JSON.
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Report or remove unreferenced Lake artifacts.
-    Gc {
-        /// Limit collection to one Lean toolchain.
-        #[arg(long, value_name = "TOOLCHAIN")]
-        toolchain: Option<String>,
-
-        /// Minimum age of unreferenced artifacts.
-        #[arg(long, default_value_t = 30, value_name = "DAYS")]
-        max_age_days: u64,
-
-        /// Delete reported artifacts.
-        #[arg(long)]
-        apply: bool,
-
-        /// Print machine-readable JSON.
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-/// Identity and transport options shared by remote snapshot uploads/downloads.
 #[derive(Debug, Args)]
-pub struct RemoteSnapshotArgs {
-    /// Remote hierarchy, such as `organization/project`.
-    #[arg(long, default_value = "default", value_name = "NAME")]
-    pub namespace: String,
-
-    /// Snapshot revision. Defaults to the current project lock digest.
-    #[arg(long, value_name = "REVISION")]
-    pub revision: Option<String>,
-
-    /// Lean toolchain. Defaults to the current project toolchain.
-    #[arg(long, value_name = "TOOLCHAIN")]
-    pub toolchain: Option<String>,
-
-    /// Native artifact platform. Defaults to the current host.
-    #[arg(long, value_name = "PLATFORM")]
-    pub platform: Option<String>,
-
-    /// Permit plain HTTP to a non-loopback server.
-    #[arg(long)]
-    pub allow_insecure_http: bool,
-
-    /// Print machine-readable JSON.
+pub struct CacheStatusArgs {
+    /// Print a machine-readable report.
     #[arg(long)]
     pub json: bool,
 }
 
-#[derive(Debug, Subcommand)]
-pub enum RemoteCacheCommand {
-    /// Generate an Ed25519 signing key and shareable public key.
-    Keygen {
-        /// Destination for the mode-0600 signing key.
-        #[arg(long, value_name = "PATH")]
-        private_key: PathBuf,
+#[derive(Debug, Args)]
+pub struct CacheGcArgs {
+    /// Keep unreferenced entries younger than this many days.
+    #[arg(long, default_value_t = 30, value_name = "N")]
+    pub max_age_days: u64,
 
-        /// Destination for the public verification key.
-        #[arg(long, value_name = "PATH")]
-        public_key: PathBuf,
+    /// Also collect the Lake artifact caches of registered projects: the
+    /// mappings and artifacts that no registered project's traces reference.
+    #[arg(long)]
+    pub lake: bool,
 
-        /// Replace an existing key pair.
-        #[arg(long)]
-        force: bool,
-    },
+    /// Delete the reported entries instead of only listing them.
+    #[arg(long)]
+    pub apply: bool,
 
-    /// Sign and upload the selected toolchain's Lake artifact snapshot.
-    Push {
-        /// Directory, file:// URL, or HTTPS object-store base URL.
-        #[arg(value_name = "REMOTE")]
-        remote: String,
-
-        /// Ed25519 private key generated by `lev cache remote keygen`.
-        #[arg(long, value_name = "PATH")]
-        signing_key: PathBuf,
-
-        #[command(flatten)]
-        snapshot: RemoteSnapshotArgs,
-    },
-
-    /// Authenticate, verify, and install a Lake artifact snapshot.
-    Pull {
-        /// Directory, file:// URL, or HTTPS object-store base URL.
-        #[arg(value_name = "REMOTE")]
-        remote: String,
-
-        /// Explicit Ed25519 public-key trust anchor.
-        #[arg(long, value_name = "PATH")]
-        public_key: PathBuf,
-
-        #[command(flatten)]
-        snapshot: RemoteSnapshotArgs,
-    },
+    /// Print a machine-readable report.
+    #[arg(long)]
+    pub json: bool,
 }

@@ -32,8 +32,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked
-        env:
-          LEV_RELEASE_REPOSITORY: ${{ github.repository }}
       - name: Package Unix binary
         if: runner.os != 'Windows'
         shell: bash

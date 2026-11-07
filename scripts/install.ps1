@@ -52,8 +52,8 @@ try {
         Join-Path $env:LOCALAPPDATA "Programs\lev\bin"
     }
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    # Windows cannot replace a running lev process, so this installer owns the
-    # final copy rather than delegating to `lev self update`.
+    # Windows cannot replace a running executable, so close lev before
+    # reinstalling it.
     Copy-Item -Force $Binary (Join-Path $Destination "lev.exe")
     Write-Output "installed lev to $(Join-Path $Destination 'lev.exe')"
 } finally {

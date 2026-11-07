@@ -2,16 +2,15 @@
 
 //! Library entry point for the `lev` CLI.
 //!
-//! The public surface is the parsed CLI and [`run`].
+//! The public surface is the parsed CLI, [`run`], and [`check`], the
+//! incremental external checking engine.
 
 mod app;
 mod cache;
+pub mod check;
 mod cli;
 mod core;
-mod dependency;
-mod diagnostics;
 mod project;
-mod toolchain;
 
 use anyhow::Result;
 

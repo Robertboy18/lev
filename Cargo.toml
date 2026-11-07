@@ -1,21 +1,22 @@
 [package]
 name = "lev-cli"
-version = "1.0.0"
+version = "2.0.0"
 authors = ["Robert Joseph George"]
 edition = "2024"
-description = "A uv-inspired Lean project, dependency, cache, and toolchain manager"
+description = "A companion to Lake for large Lean developments: explains rebuilds, checks modules with external kernels, and prunes caches"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/robertboy18/lev"
 homepage = "https://robertboy18.github.io/lev/"
 documentation = "https://docs.rs/lev-cli"
 rust-version = "1.85"
-keywords = ["lean", "lake", "package-manager", "toolchain", "environment"]
+keywords = ["lean", "lake", "build", "cache", "theorem-proving"]
 categories = ["command-line-utilities", "development-tools"]
 include = [
     "/.github/**",
     "/scripts/**",
     "/src/**",
+    "/lean/**",
     "/tests/**",
     "/schemas/**",
     "/Cargo.toml",
@@ -36,25 +37,18 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1.0"
-base64 = "0.22"
 clap = { version = "4.5", features = ["derive"] }
-clap_complete = "4.5"
-ed25519-dalek = { version = "2.2", features = ["rand_core"] }
-# FastCDC boundaries are stored in signed manifests. Keep this exact until a
-# deliberate format revision teaches old and new chunk layouts to coexist.
-fastcdc = "=4.0.1"
 fs2 = "0.4"
-glob = "0.3"
-notify = "8.2"
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-tar = { version = "0.4", default-features = false }
 tempfile = "3.20"
-toml_edit = { version = "0.23", features = ["serde"] }
-ureq = { version = "3.3", default-features = false, features = ["rustls"] }
-zstd = { version = "0.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 atomicwrites = "0.4"
+
+# `lev check` hashes kernel binaries and the reference export, a few hundred
+# MB per run; unoptimized SHA-256 makes debug builds and tests crawl.
+[profile.dev.package.sha2]
+opt-level = 3

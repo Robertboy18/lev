@@ -1,13 +1,14 @@
-//! Child-process execution and exit-code handling.
+//! Child-process helpers.
 //!
-//! Checked calls become errors; passthrough calls preserve the child's status.
+//! A checked call turns a failed child into an error that quotes the command.
 
 use std::ffi::OsStr;
 use std::process::{Command, ExitStatus, Output};
 
 use anyhow::{Context, Result, bail};
 
-pub fn checked_output(command: &mut Command) -> Result<Output> {
+/// Run `command` to completion and fail unless it exits successfully.
+pub(crate) fn checked_output(command: &mut Command) -> Result<Output> {
     let description = describe(command);
     let output = command
         .output()
@@ -26,34 +27,18 @@ pub fn checked_output(command: &mut Command) -> Result<Output> {
     }
 }
 
-pub fn checked_status(command: &mut Command) -> Result<()> {
-    let description = describe(command);
-    let status = command
-        .status()
-        .with_context(|| format!("failed to start {description}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        bail!("{description} failed with {}", display_status(status))
-    }
-}
-
-pub fn passthrough_status(command: &mut Command) -> Result<ExitStatus> {
-    let description = describe(command);
-    command
-        .status()
-        .with_context(|| format!("failed to start {description}"))
-}
-
-pub fn exit_code(status: ExitStatus) -> i32 {
+/// The child's exit code, or 1 when a signal ended it.
+pub(crate) fn exit_code(status: ExitStatus) -> i32 {
     status.code().unwrap_or(1)
 }
 
-pub fn output_text(output: Output) -> String {
+/// Trimmed standard output as text.
+pub(crate) fn output_text(output: Output) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
-fn describe(command: &Command) -> String {
+/// Render a command the way a user would type it.
+pub(crate) fn describe(command: &Command) -> String {
     let mut text = quote(command.get_program());
     for arg in command.get_args() {
         text.push(' ');

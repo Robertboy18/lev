@@ -1,337 +1,354 @@
 use super::*;
 
-#[test]
-fn authenticated_remote_cache_round_trips_through_the_cli() {
-    let fixture = Fixture::new();
-    let toolchain = "leanprover/lean4:v4.test";
-    let lake = lake_cache_path(&fixture.cache, toolchain);
-    fs::create_dir_all(lake.join("artifacts")).unwrap();
-    fs::create_dir_all(lake.join("outputs/root")).unwrap();
-    fs::write(lake.join("artifacts/0123456789abcdef.olean"), "olean").unwrap();
-    fs::write(
-        lake.join("outputs/root/1111111111111111.json"),
-        r#"{"schemaVersion":"2026-02-25","service":null,
-            "data":"0123456789abcdef.olean"}"#,
-    )
-    .unwrap();
+const MAPPING_KEPT: &str = "aaaaaaaaaaaaaaaa";
+const MAPPING_UNUSED: &str = "bbbbbbbbbbbbbbbb";
 
-    let remote = fixture.root.join("artifact-remote");
-    let private_key = fixture.root.join("remote-cache.key");
-    let public_key = fixture.root.join("remote-cache.pub");
-    let keygen = fixture
-        .lev()
-        .arg("cache")
-        .arg("remote")
-        .arg("keygen")
-        .arg("--private-key")
-        .arg(&private_key)
-        .arg("--public-key")
-        .arg(&public_key)
-        .output()
-        .unwrap();
-    assert_success_ref(&keygen);
-    assert_eq!(
-        fs::metadata(&private_key).unwrap().permissions().mode() & 0o777,
-        0o600
+/// Build once so the project is registered and its trace names the kept
+/// mapping and one artifact, then fill the Lake cache around it.
+fn registered_project_with_cache(fixture: &Fixture) {
+    let after = fixture.root.join("after");
+    let mut trace = module_trace(
+        MAPPING_KEPT,
+        (&fixture.project.join("Root.lean"), "1"),
+        &[],
+        "0123456789abcdef",
     );
-
-    let push = fixture
+    trace["outputs"] = json!({"o": ["0123456789abcdef.olean"], "m": true});
+    write_trace(&after, ".lake/build/lib/lean/Root.trace", &trace);
+    let build = fixture
         .lev()
-        .arg("cache")
-        .arg("remote")
-        .arg("push")
-        .arg(&remote)
-        .arg("--signing-key")
-        .arg(&private_key)
-        .arg("--namespace")
-        .arg("tests/project")
-        .arg("--revision")
-        .arg("revision-1")
-        .arg("--toolchain")
-        .arg(toolchain)
-        .arg("--json")
+        .args(["inspect", "build", "--json"])
+        .env("LEV_TEST_LAKE_TREE", &after)
         .output()
         .unwrap();
-    assert_success_ref(&push);
-    let push = json_data(&push, "lev.cli.cache.remote.push/v1");
-    assert_eq!(push["artifacts"], 1);
-    assert_eq!(push["mappings"], 1);
-    assert_eq!(push["blobs_uploaded"], 2);
+    assert_success(&build);
 
-    fs::remove_dir_all(&lake).unwrap();
-    let pull = fixture
-        .lev()
-        .arg("cache")
-        .arg("remote")
-        .arg("pull")
-        .arg(&remote)
-        .arg("--public-key")
-        .arg(&public_key)
-        .arg("--namespace")
-        .arg("tests/project")
-        .arg("--revision")
-        .arg("revision-1")
-        .arg("--toolchain")
-        .arg(toolchain)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert_success_ref(&pull);
-    let pull = json_data(&pull, "lev.cli.cache.remote.pull/v1");
-    assert_eq!(pull["files_created"], 2);
-    assert_eq!(
-        fs::read_to_string(lake.join("artifacts/0123456789abcdef.olean")).unwrap(),
-        "olean"
-    );
-    assert!(lake.join("outputs/root/1111111111111111.json").is_file());
-
-    let repeat = fixture
-        .lev()
-        .arg("cache")
-        .arg("remote")
-        .arg("pull")
-        .arg(&remote)
-        .arg("--public-key")
-        .arg(&public_key)
-        .arg("--namespace")
-        .arg("tests/project")
-        .arg("--revision")
-        .arg("revision-1")
-        .arg("--toolchain")
-        .arg(toolchain)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert_success_ref(&repeat);
-    let repeat = json_data(&repeat, "lev.cli.cache.remote.pull/v1");
-    assert_eq!(repeat["files_created"], 0);
-    assert_eq!(repeat["files_reused"], 2);
-    assert_success(
-        fixture
-            .lev()
-            .arg("cache")
-            .arg("artifacts")
-            .arg("verify")
-            .arg("--toolchain")
-            .arg(toolchain)
-            .output()
-            .unwrap(),
-    );
-}
-
-#[test]
-fn legacy_lake_artifact_cache_verifies_and_collects_through_the_cli() {
-    let fixture = Fixture::new();
-    let toolchain = "leanprover/lean4:v4.test";
-    let lake = lake_cache_path(&fixture.cache, toolchain);
-    fs::create_dir_all(lake.join("artifacts")).unwrap();
-    fs::create_dir_all(lake.join("inputs")).unwrap();
-    for name in [
-        "14550171264454906567.olean",
-        "3453551376365123793.ilean",
-        "940372859017955812.c",
-        "999.art",
+    let lake = fixture.lake_cache();
+    for artifact in [
+        "0123456789abcdef.olean",
+        "1111111111111111.olean",
+        "2222222222222222.olean",
+        "3333333333333333.olean",
     ] {
-        fs::write(lake.join("artifacts").join(name), name).unwrap();
+        write_file(&lake.join("artifacts").join(artifact), artifact);
     }
-    fs::write(
-        lake.join("inputs/root.jsonl"),
-        concat!(
-            "[\"6147500214486957215\",",
-            "{\"o\":[\"14550171264454906567\"],",
-            "\"i\":\"3453551376365123793\",",
-            "\"c\":\"940372859017955812\"}]\n"
-        ),
-    )
-    .unwrap();
-
-    let status = fixture
-        .lev()
-        .arg("cache")
-        .arg("artifacts")
-        .arg("status")
-        .arg("--toolchain")
-        .arg(toolchain)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert_success_ref(&status);
-    let status = json_data(&status, "lev.cli.cache.artifacts.status/v1");
-    assert_eq!(status["stats"]["artifacts"], 4);
-    assert_eq!(status["stats"]["mappings"], 1);
-    assert_eq!(status["stats"]["referenced_artifacts"], 3);
-    assert_eq!(status["stats"]["unreferenced_artifacts"], 1);
-
-    assert_success(
-        fixture
-            .lev()
-            .arg("cache")
-            .arg("artifacts")
-            .arg("verify")
-            .arg("--toolchain")
-            .arg(toolchain)
-            .output()
-            .unwrap(),
-    );
-    assert_success(
-        fixture
-            .lev()
-            .arg("cache")
-            .arg("artifacts")
-            .arg("gc")
-            .arg("--toolchain")
-            .arg(toolchain)
-            .arg("--max-age-days")
-            .arg("0")
-            .arg("--apply")
-            .output()
-            .unwrap(),
-    );
-
-    assert!(!lake.join("artifacts/999.art").exists());
-    for name in [
-        "14550171264454906567.olean",
-        "3453551376365123793.ilean",
-        "940372859017955812.c",
+    for (hash, artifact) in [
+        (MAPPING_KEPT, "1111111111111111.olean"),
+        (MAPPING_UNUSED, "2222222222222222.olean"),
     ] {
-        assert!(lake.join("artifacts").join(name).is_file(), "{name}");
+        write_file(
+            &lake.join(format!("outputs/root/{hash}.json")),
+            &json!({"schemaVersion": "2026-02-25", "service": null, "data": {"o": [artifact]}})
+                .to_string(),
+        );
     }
 }
 
-#[test]
-fn authenticated_remote_cache_uses_http_object_transport_and_bearer_token() {
-    let fixture = Fixture::new();
-    let toolchain = "leanprover/lean4:v4.test";
-    let lake = lake_cache_path(&fixture.cache, toolchain);
-    fs::create_dir_all(lake.join("artifacts")).unwrap();
-    fs::create_dir_all(lake.join("outputs/root")).unwrap();
-    fs::write(lake.join("artifacts/0123456789abcdef.olean"), "olean").unwrap();
-    fs::write(
-        lake.join("outputs/root/1111111111111111.json"),
-        r#"{"schemaVersion":"2026-02-25","service":null,
-            "data":"0123456789abcdef.olean"}"#,
-    )
-    .unwrap();
+fn write_file(path: &Path, contents: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, contents).unwrap();
+}
 
-    let private_key = fixture.root.join("http-cache.key");
-    let public_key = fixture.root.join("http-cache.pub");
-    assert_success(
-        fixture
-            .lev()
-            .arg("cache")
-            .arg("remote")
-            .arg("keygen")
-            .arg("--private-key")
-            .arg(&private_key)
-            .arg("--public-key")
-            .arg(&public_key)
-            .output()
-            .unwrap(),
-    );
-    let server = TestObjectServer::start("secret-token");
-
-    let push = fixture
-        .lev()
-        .arg("cache")
-        .arg("remote")
-        .arg("push")
-        .arg(&server.base)
-        .arg("--signing-key")
-        .arg(&private_key)
-        .arg("--namespace")
-        .arg("tests/http")
-        .arg("--revision")
-        .arg("revision-1")
-        .arg("--toolchain")
-        .arg(toolchain)
-        .env("LEV_REMOTE_TOKEN", "secret-token")
-        .output()
-        .unwrap();
-    assert_success_ref(&push);
-
-    fs::remove_dir_all(&lake).unwrap();
-    let pull = fixture
-        .lev()
-        .arg("cache")
-        .arg("remote")
-        .arg("pull")
-        .arg(&server.base)
-        .arg("--public-key")
-        .arg(&public_key)
-        .arg("--namespace")
-        .arg("tests/http")
-        .arg("--revision")
-        .arg("revision-1")
-        .arg("--toolchain")
-        .arg(toolchain)
-        .env("LEV_REMOTE_TOKEN", "secret-token")
-        .output()
-        .unwrap();
-    assert_success_ref(&pull);
-    assert_eq!(
-        fs::read_to_string(lake.join("artifacts/0123456789abcdef.olean")).unwrap(),
-        "olean"
-    );
-    assert!(lake.join("outputs/root/1111111111111111.json").is_file());
-
-    let requests = server.requests.lock().unwrap();
-    assert!(requests.iter().any(|request| request.method == "PUT"));
-    assert!(requests.iter().any(|request| request.method == "GET"));
-    assert!(
-        requests
-            .iter()
-            .all(|request| request.authorization.as_deref() == Some("Bearer secret-token"))
-    );
+fn candidates(report: &Value) -> Vec<(String, PathBuf)> {
+    report["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|candidate| {
+            (
+                candidate["kind"].as_str().unwrap().to_owned(),
+                PathBuf::from(candidate["path"].as_str().unwrap()),
+            )
+        })
+        .collect()
 }
 
 #[test]
-fn local_sync_publishes_locks_and_attaches_shared_dependencies() {
+fn cache_status_inventories_the_lake_cache_of_registered_projects() {
     let fixture = Fixture::new();
-    let revision = fixture.commit("def answer := 42\n", "first");
-    fixture.write_manifest(&revision);
-    let manifest = fs::read(fixture.project.join("lake-manifest.json")).unwrap();
-    let resolved = fixture.root.join("resolved-manifest.json");
-    fs::write(&resolved, &manifest).unwrap();
-    fs::remove_file(fixture.project.join("lake-manifest.json")).unwrap();
+    registered_project_with_cache(&fixture);
 
     let output = fixture
         .lev()
-        .arg("--local")
-        .arg("--verbose")
-        .arg("sync")
-        .env("LEV_TEST_LAKE_UPDATE_MANIFEST", &resolved)
+        .args(["cache", "status", "--json"])
         .output()
         .unwrap();
-    assert_success_ref(&output);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("shared dependency environment"), "{stderr}");
-    assert!(stderr.contains("published lake-manifest.json"), "{stderr}");
+    assert_success(&output);
+    let report = json_data(&output, "lev.cli.cache.status/v2");
+    assert_eq!(report["lev_cache"]["projects"], 1);
+    assert_eq!(report["lev_cache"]["missing_projects"], 0);
+    let lake = &report["lake_caches"][0];
     assert_eq!(
-        fs::read(fixture.project.join("lake-manifest.json")).unwrap(),
-        manifest
+        PathBuf::from(lake["path"].as_str().unwrap()),
+        fixture.lake_cache()
     );
-    assert!(fixture.project.join("lev.lock").is_file());
-    assert_success(fixture.lev().arg("lock").arg("--check").output().unwrap());
+    assert_eq!(lake["projects"], 1);
+    assert_eq!(lake["artifacts"], 4);
+    assert_eq!(lake["mappings"], 2);
+    assert_eq!(lake["unmapped_artifacts"], 2);
+    assert_eq!(lake["missing"], json!([]));
 
-    let workspaces = workspace_projects(&fixture.cache);
-    assert_eq!(workspaces.len(), 1, "{workspaces:?}");
-    let packages = workspaces[0].join(".lake/packages");
+    let text = stdout(&fixture.lev().args(["cache", "status"]).output().unwrap());
     assert!(
-        fs::symlink_metadata(&packages)
-            .unwrap()
-            .file_type()
-            .is_symlink()
+        text.contains("projects    1 registered, 0 no longer on disk\n"),
+        "{text}"
     );
-    assert_eq!(
-        git_output(&packages.join("dep"), &["rev-parse", "HEAD"]),
-        revision
-    );
+    assert!(text.contains("  mappings    2\n"), "{text}");
+}
 
-    let status = fixture.lev().arg("cache").arg("status").output().unwrap();
-    assert_success_ref(&status);
+#[test]
+fn cache_gc_keeps_what_registered_projects_reference() {
+    let fixture = Fixture::new();
+    registered_project_with_cache(&fixture);
+    let lake = fixture.lake_cache();
+    let artifact = |name: &str| lake.join("artifacts").join(name);
+
+    let young = fixture
+        .lev()
+        .args(["cache", "gc", "--lake", "--json"])
+        .output()
+        .unwrap();
+    assert_success(&young);
+    assert_eq!(candidates(&json_data(&young, "lev.cli.cache.gc/v2")), []);
+
+    // Without --lake, Lake's cache is left alone however old it is.
+    let own = fixture
+        .lev()
+        .args(["cache", "gc", "--max-age-days", "0"])
+        .output()
+        .unwrap();
+    assert_success(&own);
     assert!(
-        String::from_utf8_lossy(&status.stdout).contains("shared dependency environments: 1"),
+        stdout(&own).contains("nothing to collect"),
         "{}",
-        String::from_utf8_lossy(&status.stdout)
+        stdout(&own)
+    );
+    assert!(stderr(&own).contains("pass --lake"), "{}", stderr(&own));
+
+    let dry = fixture
+        .lev()
+        .args(["cache", "gc", "--lake", "--max-age-days", "0", "--json"])
+        .output()
+        .unwrap();
+    assert_success(&dry);
+    let report = json_data(&dry, "lev.cli.cache.gc/v2");
+    assert_eq!(report["applied"], false);
+    assert_eq!(report["lake"], true);
+    // The toolchain's default cache serves projects lev does not know.
+    assert_eq!(report["shared"], json!([lake]));
+    let unused_mapping = lake.join(format!("outputs/root/{MAPPING_UNUSED}.json"));
+    assert_eq!(
+        candidates(&report),
+        [
+            ("lake-mapping".to_owned(), unused_mapping.clone()),
+            (
+                "lake-artifact".to_owned(),
+                artifact("2222222222222222.olean")
+            ),
+            (
+                "lake-artifact".to_owned(),
+                artifact("3333333333333333.olean")
+            ),
+        ]
+    );
+    assert!(unused_mapping.exists());
+
+    let listed = fixture
+        .lev()
+        .args(["cache", "gc", "--lake", "--max-age-days", "0"])
+        .output()
+        .unwrap();
+    assert_success(&listed);
+    assert!(
+        stdout(&listed).contains(&format!(
+            "shared {}: projects lev has not registered may use it too",
+            lake.display()
+        )),
+        "{}",
+        stdout(&listed)
+    );
+
+    let text = fixture
+        .lev()
+        .args(["cache", "gc", "--lake", "--max-age-days", "0", "--apply"])
+        .output()
+        .unwrap();
+    assert_success(&text);
+    assert!(
+        stdout(&text).contains("removed 3 entries"),
+        "{}",
+        stdout(&text)
+    );
+    assert!(!unused_mapping.exists());
+    assert!(!artifact("3333333333333333.olean").exists());
+    assert!(artifact("0123456789abcdef.olean").exists());
+    assert!(artifact("1111111111111111.olean").exists());
+    assert!(
+        lake.join(format!("outputs/root/{MAPPING_KEPT}.json"))
+            .exists()
+    );
+
+    // Once the project is gone, nothing protects its record or its entries.
+    fs::remove_dir_all(&fixture.project).unwrap();
+    let elsewhere = fixture.root.join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    let gone = fixture
+        .lev_at(&elsewhere)
+        .args([
+            "cache",
+            "gc",
+            "--lake",
+            "--max-age-days",
+            "0",
+            "--apply",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&gone);
+    let kinds = candidates(&json_data(&gone, "lev.cli.cache.gc/v2"))
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        [
+            "project-record",
+            "lake-mapping",
+            "lake-artifact",
+            "lake-artifact"
+        ]
+    );
+    assert_eq!(fs::read_dir(lake.join("artifacts")).unwrap().count(), 0);
+}
+
+#[test]
+fn cache_status_fails_on_missing_artifacts_and_gc_leaves_that_cache_alone() {
+    let fixture = Fixture::new();
+    registered_project_with_cache(&fixture);
+    let lake = fixture.lake_cache();
+    fs::remove_file(lake.join("artifacts/1111111111111111.olean")).unwrap();
+
+    let status = fixture
+        .lev()
+        .args(["cache", "status", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(status.status.code(), Some(1), "{}", stderr(&status));
+    let report = json_data(&status, "lev.cli.cache.status/v2");
+    assert_eq!(
+        report["lake_caches"][0]["missing"][0]["artifact"],
+        "1111111111111111.olean"
+    );
+
+    let gc = fixture
+        .lev()
+        .args([
+            "cache",
+            "gc",
+            "--lake",
+            "--max-age-days",
+            "0",
+            "--apply",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&gc);
+    let report = json_data(&gc, "lev.cli.cache.gc/v2");
+    assert_eq!(candidates(&report), []);
+    assert!(
+        report["skipped"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("missing artifacts"),
+        "{report}"
+    );
+    assert!(lake.join("artifacts/3333333333333333.olean").exists());
+}
+
+#[test]
+fn cache_gc_leaves_an_older_lake_layout_alone() {
+    let fixture = Fixture::new();
+    registered_project_with_cache(&fixture);
+    let lake = fixture.lake_cache();
+    write_file(&lake.join("inputs/root.jsonl"), "[\"1\",42]\n");
+
+    let gc = fixture
+        .lev()
+        .args([
+            "cache",
+            "gc",
+            "--lake",
+            "--max-age-days",
+            "0",
+            "--apply",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&gc);
+    let report = json_data(&gc, "lev.cli.cache.gc/v2");
+    assert_eq!(candidates(&report), []);
+    assert!(
+        report["skipped"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("older inputs/ layout"),
+        "{report}"
+    );
+    assert!(lake.join("artifacts/3333333333333333.olean").exists());
+}
+
+#[test]
+fn cache_gc_skips_a_lake_cache_whose_references_it_cannot_read_in_full() {
+    let fixture = Fixture::new();
+    registered_project_with_cache(&fixture);
+    let lake = fixture.lake_cache();
+    let gc = || {
+        let output = fixture
+            .lev()
+            .args([
+                "cache",
+                "gc",
+                "--lake",
+                "--max-age-days",
+                "0",
+                "--apply",
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let report = json_data(&output, "lev.cli.cache.gc/v2");
+        assert_eq!(candidates(&report), []);
+        assert_eq!(report["skipped"][0]["path"], json!(lake));
+        report["skipped"][0]["reason"].as_str().unwrap().to_owned()
+    };
+
+    // A trace lev cannot parse may name entries of this cache.
+    let broken = fixture.project.join(".lake/build/lib/lean/Broken.trace");
+    write_file(&broken, "not json");
+    let reason = gc();
+    assert!(reason.contains("Broken.trace"), "{reason}");
+    fs::remove_file(&broken).unwrap();
+
+    // A lakefile may put the build, and its traces, elsewhere.
+    let lakefile = fixture.project.join("lakefile.toml");
+    let original = fs::read_to_string(&lakefile).unwrap();
+    fs::write(&lakefile, format!("buildDir = \"out\"\n{original}")).unwrap();
+    let reason = gc();
+    assert!(reason.contains("buildDir"), "{reason}");
+    fs::write(&lakefile, original).unwrap();
+
+    // Without the manifest, lev does not know the project's packages.
+    fs::write(fixture.project.join("lake-manifest.json"), "{").unwrap();
+    let reason = gc();
+    assert!(reason.contains("lake-manifest.json"), "{reason}");
+
+    assert!(lake.join("artifacts/3333333333333333.olean").exists());
+    assert!(
+        lake.join(format!("outputs/root/{MAPPING_UNUSED}.json"))
+            .exists()
     );
 }

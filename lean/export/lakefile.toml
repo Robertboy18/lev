@@ -1,0 +1,6 @@
+name = "lev-export"
+defaultTargets = ["lev-export"]
+
+[[lean_exe]]
+name = "lev-export"
+root = "LevExport"

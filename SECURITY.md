@@ -5,28 +5,30 @@ Report security-sensitive issues through a
 Do not publish credentials, private repository URLs, or exploit details in a
 public issue.
 
-lev executes selected Lean toolchains, Git, Lake, optional elan, and commands
-configured by the local project. A project and its dependencies must therefore
-be treated as executable code. Cache validation protects storage integrity; it
-is not a sandbox. Installed tools and inline scripts have the same trust
-boundary: their Lake packages and Lean code execute with the user's
-permissions.
+lev runs elan, Lean, Lake, Git, and bwrap. `lev inspect build` and
+`lev check` run `lake build`, which executes the project's Lakefile and the
+code of every dependency with the user's permissions, so a project and its
+dependencies must be treated as executable code. lev is not a sandbox for
+builds.
 
-Private metadata-registry credentials are referenced by environment-variable
-name. lev does not persist token values in project configuration, request
-URLs, logs, or cache records. Authenticated metadata caches are partitioned by
-a SHA-256 token digest; use high-entropy credentials and rotate them through
-the registry rather than editing cache data.
+After the build, `lev check` runs Lake's queries, lev-export and the kernels
+in a bwrap sandbox: `/` read-only, home directories and scratch space
+covered, the toolchain and the project bound read-only, only the export
+directory writable, a cleared environment, and no network. `--no-sandbox`
+turns that off and `--no-build` skips the unsandboxed build. Two things stay
+trusted. Verdicts in lev's cache are believed as they are, so anyone who can
+write to lev's cache directory can make a check accept. And whether the
+checked slices compose is decided by lev's own linker, which has no proof.
 
-Remote cache and toolchain signatures authenticate the explicit public key
-supplied by the user. They do not certify that an arbitrary key belongs to Lean
-upstream. Distribute trust anchors separately from the object host, keep
-private signing keys out of publication trees and logs, and report any path,
-signature, digest, or extraction bypass privately.
+`lev cache gc --apply` deletes files in lev's own cache directory, and with
+`--lake` also in Lake's artifact caches, and only the files it listed. It
+counts a registered project as the only evidence that a Lake entry is in
+use, so Lake builds of other projects on the same cache may have to rebuild
+what it removed. It skips a Lake cache whose references it cannot read in
+full. Report any way to make it delete a file outside those directories
+privately.
 
-Release installers and `lev self update` verify SHA-256 files downloaded from
-the same GitHub release as the executable. This detects corruption and
-mismatched assets but is not an independent signing authority; release
-security still depends on TLS and control of the configured GitHub repository.
-Signed remote caches and toolchain indexes use an explicit out-of-band public
-key when that stronger trust separation is required.
+Release installers verify SHA-256 files downloaded from the same GitHub
+release as the executable. This detects corruption and mismatched assets but
+is not an independent signing authority; release security still depends on
+TLS and control of the configured GitHub repository.

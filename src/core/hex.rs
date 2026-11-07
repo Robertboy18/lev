@@ -1,4 +1,16 @@
-//! Lexical checks for lowercase hexadecimal identifiers.
+//! Lowercase hexadecimal encoding and checks.
+
+/// Encode bytes as lowercase hexadecimal text.
+pub(crate) fn lowercase(value: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value {
+        encoded.push(DIGITS[(byte >> 4) as usize] as char);
+        encoded.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
 
 /// Whether `value` is lowercase hexadecimal text of exactly `length` bytes.
 pub(crate) fn is_lower_hex(value: &str, length: usize) -> bool {
@@ -8,28 +20,17 @@ pub(crate) fn is_lower_hex(value: &str, length: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Whether `value` is a canonical SHA-256 digest.
-pub(crate) fn is_sha256(value: &str) -> bool {
-    is_lower_hex(value, 64)
-}
-
-/// Whether `value` is a full lowercase SHA-1 or SHA-256 Git object ID.
-pub(crate) fn is_git_object_id(value: &str) -> bool {
-    is_lower_hex(value, 40) || is_sha256(value)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{is_git_object_id, is_sha256};
+    use super::{is_lower_hex, lowercase};
 
     #[test]
-    fn accepts_only_canonical_lowercase_digests() {
-        assert!(is_git_object_id(&"a".repeat(40)));
-        assert!(is_git_object_id(&"0".repeat(64)));
-        assert!(is_sha256(&"f".repeat(64)));
-        assert!(!is_git_object_id(&"a".repeat(39)));
-        assert!(!is_git_object_id(&"g".repeat(40)));
-        assert!(!is_git_object_id(&"A".repeat(40)));
-        assert!(!is_git_object_id("release-tag"));
+    fn encodes_and_recognizes_lowercase_hex() {
+        assert_eq!(lowercase(&[]), "");
+        assert_eq!(lowercase(&[0x00, 0x09, 0xaf, 0xff]), "0009afff");
+        assert!(is_lower_hex("0123456789abcdef", 16));
+        assert!(!is_lower_hex("0123456789abcdeF", 16));
+        assert!(!is_lower_hex("0123456789abcde", 16));
+        assert!(!is_lower_hex("0123456789abcdeg", 16));
     }
 }

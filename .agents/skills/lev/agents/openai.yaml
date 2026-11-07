@@ -1,4 +1,4 @@
 interface:
   display_name: "lev"
-  short_description: "Use lev for Lean project workflows"
-  default_prompt: "Use $lev to sync, build, test, and diagnose this Lean project."
+  short_description: "Explain Lake rebuilds, check modules incrementally, prune caches"
+  default_prompt: "Use $lev to explain why Lake rebuilt modules, check the modules with external kernels, check the Lean setup, and review the caches in this project."

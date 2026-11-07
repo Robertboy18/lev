@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-# End-to-end compatibility script used by CI and local release checks. The
-# caller supplies selectors; keeping that list outside the script lets this
-# exercise future releases, RCs, nightlies, and custom elan identifiers.
+# End-to-end check of lev against real Lean toolchains, used by CI and before
+# releases. The caller supplies the toolchains; keeping that list outside the
+# script lets it exercise future releases, RCs, nightlies, and custom elan
+# identifiers.
 #
 # Inputs:
 #   LEV_MATRIX_VERSIONS Required whitespace-separated toolchain selectors
@@ -40,8 +41,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mkdir -p "$ROOT/cache"
+LEV_CACHE_DIR="$ROOT/cache"
+export LEV_CACHE_DIR
 
-# Serial execution keeps failures readable and cache reuse deterministic.
+# Serial execution keeps failures readable.
 index=0
 for version in $VERSIONS; do
   index=$((index + 1))
@@ -49,14 +52,24 @@ for version in $VERSIONS; do
   # out of filesystem paths so every valid identifier exercises the same flow.
   project="$ROOT/project-$index"
   printf '\n==> Lean %s\n' "$version"
-  LEV_CACHE_DIR="$ROOT/cache" "$LEV_BIN" init "$project" --lean "$version" --template lib
-  LEV_CACHE_DIR="$ROOT/cache" "$LEV_BIN" --project "$project" sync
-  # The offline build proves that sync left a complete local environment.
-  LEV_CACHE_DIR="$ROOT/cache" "$LEV_BIN" --project "$project" build --offline
-  LEV_CACHE_DIR="$ROOT/cache" "$LEV_BIN" --project "$project" deps --json >/dev/null
-  LEV_CACHE_DIR="$ROOT/cache" "$LEV_BIN" --project "$project" doctor
+  mkdir -p "$project"
+  (cd "$project" && elan run --install "$version" lake init Smoke lib)
+  printf '%s\n' "$version" > "$project/lean-toolchain"
+
+  "$LEV_BIN" --project "$project" doctor
+  "$LEV_BIN" --project "$project" inspect build --json > "$ROOT/first-$index.json"
+
+  # One edit must come back as that module's own source change.
+  printf '\ntheorem smoke_edit : True := trivial\n' >> "$project/Smoke/Basic.lean"
+  "$LEV_BIN" --project "$project" inspect build --why Smoke > "$ROOT/second-$index.txt"
+  cat "$ROOT/second-$index.txt"
+  if ! grep -q '^edited: Smoke.Basic$' "$ROOT/second-$index.txt"; then
+    printf 'lev did not report Smoke.Basic as edited under %s\n' "$version" >&2
+    exit 1
+  fi
 done
 
-# One final scan catches cross-version cache layout or ownership mistakes.
-LEV_CACHE_DIR="$ROOT/cache" "$LEV_BIN" cache verify
+# The registered projects make both cache commands read real Lake caches.
+"$LEV_BIN" cache status
+"$LEV_BIN" cache gc --lake
 printf '\nLean compatibility matrix passed: %s\n' "$VERSIONS"

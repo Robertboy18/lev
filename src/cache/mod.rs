@@ -1,17 +1,21 @@
-//! Versioned cache paths and aggregate size accounting.
+//! lev's cache directory and the plan every collector produces.
 //!
-//! Domain modules own the formats stored under these paths. Version suffixes
-//! are part of the on-disk contract: incompatible layouts get a new directory
-//! instead of silently reinterpreting old cache data.
+//! lev keeps little state of its own: a registry of the projects it has built
+//! or checked, the lock files that keep `lev cache gc` away from a running
+//! build or check, and the exporter builds, references and verdicts of
+//! `lev check`. The directory names carry a version; an incompatible layout
+//! gets a new name.
 
-pub(crate) mod lake_artifacts;
+pub(crate) mod check;
+pub(crate) mod lake;
 pub(crate) mod registry;
-pub(crate) mod remote;
 
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::core::platform_dirs;
@@ -21,23 +25,8 @@ pub struct CacheLayout {
     pub root: PathBuf,
 }
 
-#[derive(Debug, Default)]
-pub struct CacheStats {
-    pub bytes: u64,
-    pub dependency_environments: u64,
-    pub files: u64,
-    pub git_mirrors: u64,
-    pub lake_toolchains: u64,
-    pub projects: u64,
-    pub reservoir_bytes: u64,
-    pub reservoir_files: u64,
-    pub resolution_bytes: u64,
-    pub resolution_files: u64,
-    pub script_environments: u64,
-    pub workspaces: u64,
-}
-
 impl CacheLayout {
+    /// Use `--cache-dir`, then `LEV_CACHE_DIR`, then the platform default.
     pub fn resolve(explicit: Option<PathBuf>) -> Result<Self> {
         let root = if let Some(path) = explicit {
             path
@@ -46,190 +35,102 @@ impl CacheLayout {
         } else if let Some(path) = platform_dirs::cache_root() {
             path
         } else {
-            bail!("cannot determine cache directory; set LEV_CACHE_DIR")
+            bail!("cannot determine the cache directory; set LEV_CACHE_DIR")
         };
-
-        let root = if root.is_absolute() {
-            root
-        } else {
-            std::env::current_dir()
-                .context("failed to determine current directory")?
-                .join(root)
-        };
-        Ok(Self { root })
-    }
-
-    pub fn ensure(&self) -> Result<()> {
-        fs::create_dir_all(self.git_root())
-            .with_context(|| format!("failed to create {}", self.git_root().display()))?;
-        fs::create_dir_all(self.lock_root())
-            .with_context(|| format!("failed to create {}", self.lock_root().display()))?;
-        Ok(())
-    }
-
-    pub fn git_root(&self) -> PathBuf {
-        self.root.join("git-v1")
-    }
-
-    pub fn lock_root(&self) -> PathBuf {
-        self.root.join("locks")
+        Ok(Self {
+            root: crate::project::absolute(&root)?,
+        })
     }
 
     pub fn registry_root(&self) -> PathBuf {
-        self.root.join("projects-v1")
+        self.root.join("projects-v2")
     }
 
-    pub fn lake_root(&self) -> PathBuf {
-        self.root.join("lake-v1")
+    /// The lock lev holds on one Lake cache: shared while it runs a build,
+    /// exclusive while it collects garbage.
+    pub fn lake_lock_path(&self, lake_cache: &Path) -> PathBuf {
+        let key = digest(lake_cache.to_string_lossy().as_bytes());
+        self.root
+            .join("locks")
+            .join(format!("lake-{}.lock", &key[..16]))
     }
 
-    pub fn workspace_root(&self) -> PathBuf {
-        self.root.join("workspaces-v1")
+    /// The caches of `lev check`.
+    pub fn check(&self) -> check::CheckLayout {
+        check::CheckLayout {
+            root: self.root.join("check-v1"),
+            lock: self.root.join("locks").join("check.lock"),
+        }
+    }
+}
+
+/// One file a collector would remove.
+#[derive(Debug, Serialize)]
+pub struct GcCandidate {
+    pub kind: &'static str,
+    pub path: PathBuf,
+    pub bytes: u64,
+}
+
+/// The files a collection removes, listed before anything is deleted.
+#[derive(Debug, Default, Serialize)]
+pub struct GcPlan {
+    pub candidates: Vec<GcCandidate>,
+}
+
+impl GcPlan {
+    pub fn bytes(&self) -> u64 {
+        self.candidates
+            .iter()
+            .map(|candidate| candidate.bytes)
+            .sum()
     }
 
-    pub fn reservoir_root(&self) -> PathBuf {
-        self.root.join("reservoir-v1")
-    }
-
-    pub fn dependency_root(&self) -> PathBuf {
-        self.root.join("dependencies-v1")
-    }
-
-    pub fn resolution_root(&self) -> PathBuf {
-        self.root.join("resolutions-v1")
-    }
-
-    pub fn script_root(&self) -> PathBuf {
-        self.root.join("scripts-v1")
-    }
-
-    pub fn script_environment_root(&self) -> PathBuf {
-        self.script_root().join("environments")
-    }
-
-    pub fn dependency_environment(&self, key: &str) -> PathBuf {
-        self.dependency_root().join(key)
-    }
-
-    pub fn mirror_path(&self, url: &str) -> PathBuf {
-        // The fan-out prefix prevents a large cache from putting every bare
-        // mirror in one directory.
-        let hash = digest(url.as_bytes());
-        self.git_root().join(&hash[..2]).join(format!("{hash}.git"))
-    }
-
-    pub fn mirror_lock_path(&self, url: &str) -> PathBuf {
-        self.lock_root()
-            .join(format!("git-{}.lock", digest(url.as_bytes())))
-    }
-
-    pub fn lake_dir(&self, toolchain: &str) -> PathBuf {
-        let hash = digest(toolchain.as_bytes());
-        self.lake_root().join(&hash[..16])
-    }
-
-    pub fn lake_lock_path(&self, toolchain: &str) -> PathBuf {
-        let hash = digest(toolchain.as_bytes());
-        self.lock_root().join(format!("lake-{}.lock", &hash[..16]))
-    }
-
-    pub fn ensure_lake_dir(&self, toolchain: &str) -> Result<PathBuf> {
-        let path = self.lake_dir(toolchain);
-        fs::create_dir_all(&path)
-            .with_context(|| format!("failed to create {}", path.display()))?;
-        Ok(path)
-    }
-
-    pub fn stats(&self) -> Result<CacheStats> {
-        // One traversal computes byte totals; the direct-child counters below
-        // describe logical cache entries rather than every nested directory.
-        let mut stats = CacheStats::default();
-        if self.root.exists() {
-            let reservoir = self.reservoir_root();
-            let resolutions = self.resolution_root();
-            let roots = StatsRoots {
-                reservoir: &reservoir,
-                resolutions: &resolutions,
+    /// Remove every candidate, directories with their contents. An entry
+    /// that is already gone is not an error.
+    pub fn apply(&self) -> Result<()> {
+        for candidate in &self.candidates {
+            let is_directory =
+                fs::symlink_metadata(&candidate.path).is_ok_and(|metadata| metadata.is_dir());
+            let removed = if is_directory {
+                fs::remove_dir_all(&candidate.path)
+            } else {
+                fs::remove_file(&candidate.path)
             };
-            collect_stats(&self.root, &roots, StatsRegion::default(), &mut stats)?;
-        }
-        if self.git_root().exists() {
-            stats.git_mirrors = self.mirror_paths()?.len() as u64;
-        }
-        if self.dependency_root().exists() {
-            stats.dependency_environments = count_directories(&self.dependency_root())?;
-        }
-        if self.lake_root().exists() {
-            stats.lake_toolchains = count_directories(&self.lake_root())?;
-        }
-        if self.registry_root().exists() {
-            stats.projects = count_json_files(&self.registry_root())?;
-        }
-        if self.script_environment_root().exists() {
-            stats.script_environments = count_directories(&self.script_environment_root())?;
-        }
-        if self.workspace_root().exists() {
-            stats.workspaces = count_workspaces(&self.workspace_root())?;
-        }
-        Ok(stats)
-    }
-
-    pub fn mirror_paths(&self) -> Result<Vec<PathBuf>> {
-        let mut mirrors = Vec::new();
-        let root = self.git_root();
-        if !root.exists() {
-            return Ok(mirrors);
-        }
-        for prefix in
-            fs::read_dir(&root).with_context(|| format!("failed to read {}", root.display()))?
-        {
-            let prefix =
-                prefix.with_context(|| format!("failed to read entry in {}", root.display()))?;
-            if !prefix
-                .file_type()
-                .with_context(|| format!("failed to inspect {}", prefix.path().display()))?
-                .is_dir()
-            {
-                continue;
-            }
-            for entry in fs::read_dir(prefix.path())
-                .with_context(|| format!("failed to read {}", prefix.path().display()))?
-            {
-                let entry = entry.with_context(|| {
-                    format!("failed to read entry in {}", prefix.path().display())
-                })?;
-                if entry
-                    .file_type()
-                    .with_context(|| format!("failed to inspect {}", entry.path().display()))?
-                    .is_dir()
-                    && entry.path().extension().is_some_and(|value| value == "git")
-                {
-                    mirrors.push(entry.path());
+            match removed {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to remove {}", candidate.path.display()));
                 }
             }
         }
-        mirrors.sort();
-        Ok(mirrors)
+        Ok(())
     }
 }
 
+/// Lowercase SHA-256 of `value`.
 pub fn digest(value: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(value))
+    crate::core::hex::lowercase(&Sha256::digest(value))
 }
 
-/// Encode bytes as allocation-sized lowercase hexadecimal text.
-///
-/// Random staging names use this helper instead of repeatedly allocating one
-/// temporary `String` per byte through `format!`.
-pub fn lowercase_hex(value: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-
-    let mut encoded = String::with_capacity(value.len() * 2);
-    for byte in value {
-        encoded.push(DIGITS[(byte >> 4) as usize] as char);
-        encoded.push(DIGITS[(byte & 0x0f) as usize] as char);
+/// Lowercase SHA-256 of a file's bytes, read in 1 MiB blocks.
+pub fn file_digest(path: &Path) -> Result<String> {
+    let mut file =
+        fs::File::open(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 1 << 20];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
     }
-    encoded
+    Ok(crate::core::hex::lowercase(&hasher.finalize()))
 }
 
 pub fn human_bytes(bytes: u64) -> String {
@@ -247,55 +148,8 @@ pub fn human_bytes(bytes: u64) -> String {
     }
 }
 
-struct StatsRoots<'a> {
-    reservoir: &'a Path,
-    resolutions: &'a Path,
-}
-
-#[derive(Clone, Copy, Default)]
-struct StatsRegion {
-    reservoir: bool,
-    resolutions: bool,
-}
-
-fn collect_stats(
-    path: &Path,
-    roots: &StatsRoots<'_>,
-    region: StatsRegion,
-    stats: &mut CacheStats,
-) -> Result<()> {
-    for entry in fs::read_dir(path).with_context(|| format!("failed to read {}", path.display()))? {
-        let entry = entry.with_context(|| format!("failed to read entry in {}", path.display()))?;
-        let metadata = entry
-            .file_type()
-            .with_context(|| format!("failed to inspect {}", entry.path().display()))?;
-        if metadata.is_dir() {
-            let entry_path = entry.path();
-            let child_region = StatsRegion {
-                reservoir: region.reservoir || entry_path == roots.reservoir,
-                resolutions: region.resolutions || entry_path == roots.resolutions,
-            };
-            collect_stats(&entry_path, roots, child_region, stats)?;
-        } else if metadata.is_file() {
-            let bytes = entry
-                .metadata()
-                .with_context(|| format!("failed to inspect {}", entry.path().display()))?
-                .len();
-            stats.files += 1;
-            stats.bytes += bytes;
-            if region.reservoir {
-                stats.reservoir_files += 1;
-                stats.reservoir_bytes += bytes;
-            }
-            if region.resolutions {
-                stats.resolution_files += 1;
-                stats.resolution_bytes += bytes;
-            }
-        }
-    }
-    Ok(())
-}
-
+/// The size of a file, or of every file below a directory. Symbolic links
+/// count as zero and are not followed.
 pub fn path_bytes(path: &Path) -> Result<u64> {
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("failed to inspect {}", path.display()))?;
@@ -313,63 +167,13 @@ pub fn path_bytes(path: &Path) -> Result<u64> {
     Ok(bytes)
 }
 
-fn count_directories(path: &Path) -> Result<u64> {
-    let mut count = 0;
-    for entry in fs::read_dir(path).with_context(|| format!("failed to read {}", path.display()))? {
-        let entry = entry.with_context(|| format!("failed to read entry in {}", path.display()))?;
-        if entry
-            .file_type()
-            .with_context(|| format!("failed to inspect {}", entry.path().display()))?
-            .is_dir()
-        {
-            count += 1;
-        }
-    }
-    Ok(count)
-}
-
-fn count_json_files(path: &Path) -> Result<u64> {
-    let mut count = 0;
-    for entry in fs::read_dir(path).with_context(|| format!("failed to read {}", path.display()))? {
-        let entry = entry.with_context(|| format!("failed to read entry in {}", path.display()))?;
-        if entry
-            .file_type()
-            .with_context(|| format!("failed to inspect {}", entry.path().display()))?
-            .is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|value| value == "json")
-        {
-            count += 1;
-        }
-    }
-    Ok(count)
-}
-
-fn count_workspaces(path: &Path) -> Result<u64> {
-    let mut count = 0;
-    for project in
-        fs::read_dir(path).with_context(|| format!("failed to read {}", path.display()))?
-    {
-        let project =
-            project.with_context(|| format!("failed to read entry in {}", path.display()))?;
-        if !project.file_type()?.is_dir() {
-            continue;
-        }
-        for toolchain in fs::read_dir(project.path())? {
-            let toolchain = toolchain?;
-            if toolchain.file_type()?.is_dir() && toolchain.path().join("project").is_dir() {
-                count += 1;
-            }
-        }
-    }
-    Ok(count)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{digest, human_bytes, lowercase_hex};
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::{GcCandidate, GcPlan, digest, human_bytes, path_bytes};
 
     #[test]
     fn digest_is_stable() {
@@ -377,13 +181,39 @@ mod tests {
             digest(b"https://example.invalid/repo"),
             "bdb664ccdebb6f2f604126d92cbfa69e4c780b8315ec74cfd4ab9f0385869a58"
         );
-        assert_eq!(lowercase_hex(&[]), "");
-        assert_eq!(lowercase_hex(&[0x00, 0x09, 0xaf, 0xff]), "0009afff");
     }
 
     #[test]
     fn formats_sizes() {
         assert_eq!(human_bytes(12), "12 B");
         assert_eq!(human_bytes(1536), "1.5 KiB");
+    }
+
+    #[test]
+    fn plans_count_bytes_and_tolerate_vanished_files() {
+        let temp = tempdir().unwrap();
+        fs::create_dir(temp.path().join("dir")).unwrap();
+        fs::write(temp.path().join("dir/a"), b"abc").unwrap();
+        fs::write(temp.path().join("b"), b"de").unwrap();
+        assert_eq!(path_bytes(temp.path()).unwrap(), 5);
+
+        let plan = GcPlan {
+            candidates: vec![
+                GcCandidate {
+                    kind: "test",
+                    path: temp.path().join("b"),
+                    bytes: 2,
+                },
+                GcCandidate {
+                    kind: "test",
+                    path: temp.path().join("never-existed"),
+                    bytes: 0,
+                },
+            ],
+        };
+        assert_eq!(plan.bytes(), 2);
+        plan.apply().unwrap();
+        assert!(!temp.path().join("b").exists());
+        assert!(temp.path().join("dir/a").exists());
     }
 }

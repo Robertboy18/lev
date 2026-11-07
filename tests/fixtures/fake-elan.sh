@@ -1,13 +1,10 @@
 #!/bin/sh
 set -eu
 
-# This fixture models only the elan and Lake commands exercised by cli.rs.
-# Environment variables let each process-level test select failure modes
-# without generating a different executable for every case.
+# Models only the elan and Lake commands lev runs. Environment variables let
+# each process-level test choose what the fake build prints and writes.
 printf '%s\n' "$*" >> "$LEV_TEST_LOG"
-state=${LEV_TEST_ELAN_STATE:?}
-mkdir -p "$state/links"
-installed="$state/installed"
+installed="${LEV_TEST_ELAN_STATE:?}/installed"
 touch "$installed"
 
 if [ "${1:-}" = "--version" ]; then
@@ -15,52 +12,13 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 
-if [ "${1:-}" = "toolchain" ] && [ "${2:-}" = "list" ]; then
-  cat "$installed"
-  for link in "$state"/links/*; do
-    [ -f "$link" ] || continue
-    basename "$link"
-  done
-  exit 0
-fi
-
-if [ "${1:-}" = "toolchain" ] && [ "${2:-}" = "link" ]; then
-  alias=${3:?}
-  view=${4:?}
-  case "$alias" in
-    */*) echo "invalid alias: $alias" >&2; exit 91 ;;
-  esac
-  printf '%s\n' "$view" > "$state/links/$alias"
-  exit 0
-fi
-
-if [ "${1:-}" = "toolchain" ] && [ "${2:-}" = "uninstall" ]; then
-  toolchain=${3:?}
-  next="$installed.next"
-  grep -Fvx "$toolchain" "$installed" > "$next" || true
-  mv "$next" "$installed"
-  rm -f "$state/links/$toolchain"
-  exit 0
-fi
-
-if [ "${1:-}" = "toolchain" ] && [ "${2:-}" = "gc" ]; then
-  printf '{"unused":[],"deleted":false}\n'
-  exit 0
-fi
-
 if [ "${1:-}" = "which" ] && [ "${2:-}" = "lean" ]; then
   toolchain=${ELAN_TOOLCHAIN:-}
-  if grep -Fxq "$toolchain" "$installed"; then
-    root=$LEV_TEST_TOOLCHAIN_ROOT
-  else
-    if [ -f "$state/links/$toolchain" ]; then
-      root=$(cat "$state/links/$toolchain")
-    else
-      echo "unknown toolchain: $toolchain" >&2
-      exit 92
-    fi
+  if ! grep -Fxq "$toolchain" "$installed"; then
+    echo "error: toolchain '$toolchain' is not installed" >&2
+    exit 92
   fi
-  printf '%s/bin/lean\n' "$root"
+  printf '%s/bin/lean\n' "$LEV_TEST_TOOLCHAIN_ROOT"
   exit 0
 fi
 
@@ -73,8 +31,13 @@ if [ "${1:-}" = "run" ]; then
   fi
   toolchain="${1:-}"
   shift
-  if [ "$install" = "1" ] && ! grep -Fxq "$toolchain" "$installed"; then
-    printf '%s\n' "$toolchain" >> "$installed"
+  if ! grep -Fxq "$toolchain" "$installed"; then
+    if [ "$install" = "1" ]; then
+      printf '%s\n' "$toolchain" >> "$installed"
+    else
+      echo "error: toolchain '$toolchain' is not installed" >&2
+      exit 1
+    fi
   fi
 
   if [ "${1:-}" = "lean" ] && [ "${2:-}" = "--version" ]; then
@@ -87,208 +50,20 @@ if [ "${1:-}" = "run" ]; then
     exit 0
   fi
 
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "init" ]; then
-    printf '[package]\nname = "fake"\n' > lakefile.toml
-    printf 'temporary\n' > lean-toolchain
-    exit 0
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "env" ] &&
-     [ "${3:-}" = "lean" ] && [ "${4:-}" = "--version" ]; then
-    printf 'lake-env\t%s\n' "$PWD" >> "$LEV_TEST_LOG"
-    exit 0
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "env" ] &&
-     [ "${3:-}" = "lean" ]; then
-    printf 'lake-script\t%s\n' "$PWD" >> "$LEV_TEST_LOG"
-    if [ -n "${LEV_TEST_LEAN_JSON_FILE:-}" ]; then
-      cat "$LEV_TEST_LEAN_JSON_FILE"
-    fi
-    if [ -n "${LEV_TEST_SCRIPT_ARGS_FILE:-}" ]; then
-      shift 3
-      printf '%s\n' "$@" > "$LEV_TEST_SCRIPT_ARGS_FILE"
-    fi
-    exit 0
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "lean" ]; then
-    printf 'lake-lean\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
-    exit "${LEV_TEST_LAKE_LEAN_EXIT:-0}"
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "update" ]; then
-    printf 'lake-update\t%s\n' "$PWD" >> "$LEV_TEST_LOG"
-    if [ "${LEV_TEST_LAKE_UPDATE_FAIL:-}" = "1" ] ||
-       [ "${LEV_TEST_LAKE_UPDATE_FAIL_MEMBER:-}" = "$(basename "$PWD")" ]; then
-      echo "simulated Lake update failure" >&2
-      exit 42
-    fi
-    if [ -n "${LEV_TEST_LAKE_UPDATE_EXPECT_PACKAGE:-}" ] &&
-       [ "${3:-}" != "$LEV_TEST_LAKE_UPDATE_EXPECT_PACKAGE" ]; then
-      echo "Lake update did not receive expected package $LEV_TEST_LAKE_UPDATE_EXPECT_PACKAGE" >&2
-      exit 48
-    fi
-    if [ -n "${LEV_TEST_LAKE_UPDATE_MANIFEST:-}" ]; then
-      cp "$LEV_TEST_LAKE_UPDATE_MANIFEST" lake-manifest.json
-    fi
-    if [ -n "${LEV_TEST_LAKE_UPDATE_CLONE_URL:-}" ]; then
-      mkdir -p .lake/packages
-      git clone --quiet -- "$LEV_TEST_LAKE_UPDATE_CLONE_URL" .lake/packages/dep
-      git -C .lake/packages/dep checkout --quiet --detach \
-        "${LEV_TEST_LAKE_UPDATE_CLONE_REV:?}"
-    fi
-    exit 0
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "build" ]; then
-    if [ "${3:-}" = "--no-build" ]; then
-      printf 'lake-check\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
-      if [ "${LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD:-}" = "1" ] &&
-         [ "${LAKE_ARTIFACT_CACHE:-}" != "false" ]; then
-        echo "shake freshness check used Lake's artifact cache" >&2
-        exit 49
-      fi
-      if [ "${LEV_TEST_SHAKE_FRESHNESS_FAIL:-}" = "1" ]; then
-        echo "error: object file 'Root.olean' of module Root does not exist" >&2
-        exit 1
-      fi
-      if [ "${LEV_TEST_SHAKE_EXPLICIT_REQUIRE_BUILD:-}" = "1" ] &&
-         [ ! -f "${LEV_TEST_SHAKE_BUILD_MARKER:?}" ]; then
-        echo "error: target is out-of-date and needs to be rebuilt" >&2
-        exit 3
-      fi
-      exit 0
-    fi
+  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "--verbose" ] && [ "${3:-}" = "build" ]; then
     printf 'lake-build\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
-    if [ "${LEV_TEST_SHAKE_REQUIRE_UNCACHED_BUILD:-}" = "1" ] &&
-       [ "${LAKE_ARTIFACT_CACHE:-}" != "false" ]; then
-      echo "shake verification used Lake's artifact cache" >&2
-      exit 49
+    # The tree holds the files the build leaves behind, relative to the project.
+    if [ -n "${LEV_TEST_LAKE_TREE:-}" ]; then
+      cp -R "$LEV_TEST_LAKE_TREE"/. .
     fi
-    if [ "${LEV_TEST_LAKE_BUILD_FAIL_MEMBER:-}" = "$(basename "$PWD")" ]; then
-      exit "${LEV_TEST_LAKE_BUILD_EXIT:-37}"
+    if [ -n "${LEV_TEST_LAKE_STDOUT:-}" ]; then
+      cat "$LEV_TEST_LAKE_STDOUT"
     fi
-    if [ -n "${LEV_TEST_SHAKE_FAIL_FILE:-}" ] &&
-       grep -Fq "${LEV_TEST_SHAKE_FAIL_CONTENT:?}" "$LEV_TEST_SHAKE_FAIL_FILE"; then
-      echo "simulated source-dependent build failure" >&2
-      exit "${LEV_TEST_SHAKE_FAIL_EXIT:-41}"
+    if [ -n "${LEV_TEST_LAKE_STDERR:-}" ]; then
+      cat "$LEV_TEST_LAKE_STDERR" >&2
     fi
-    if [ -n "${LEV_TEST_SHAKE_BUILD_MARKER:-}" ]; then
-      touch "$LEV_TEST_SHAKE_BUILD_MARKER"
-    fi
-    exit 0
+    exit "${LEV_TEST_LAKE_EXIT:-0}"
   fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "--verbose" ] &&
-     [ "${3:-}" = "build" ]; then
-    printf 'lake-build\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
-    target=${LEV_TEST_LAKE_VERBOSE_TARGET:-Root}
-    printf '✔ [1/5] Built %s (12ms)\n' "$target"
-    printf 'ℹ [2/5] Replayed dependency:leanArts\n' >&2
-    printf '✔ [3/5] Ran job computation\n'
-    printf '✔ [4/5] Ran %s:extraDep\n' "$target"
-    printf '✔ [5/5] Ran root\n'
-    if [ -n "${LEV_TEST_LAKE_TRACE_AFTER:-}" ]; then
-      mkdir -p .lake/build/lib/lean
-      cp "$LEV_TEST_LAKE_TRACE_AFTER" ".lake/build/lib/lean/$target.trace"
-    fi
-    if [ "${LEV_TEST_LAKE_VERBOSE_FAIL:-}" = "1" ]; then
-      printf '✖ [6/6] Building %s (15ms)\n' "$target" >&2
-      if [ -n "${LEV_TEST_LAKE_VERBOSE_ERROR:-}" ]; then
-        printf '%s\n' "$LEV_TEST_LAKE_VERBOSE_ERROR" >&2
-      fi
-      printf 'Some required targets logged failures:\n' >&2
-      printf -- '- %s\n' "$target" >&2
-      printf 'error: build failed\n' >&2
-      exit "${LEV_TEST_LAKE_BUILD_EXIT:-37}"
-    fi
-    exit 0
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "test" ]; then
-    printf 'lake-test\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
-    exit "${LEV_TEST_LAKE_TEST_EXIT:-0}"
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "lint" ]; then
-    printf 'lake-lint\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
-    exit "${LEV_TEST_LAKE_LINT_EXIT:-0}"
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "shake" ]; then
-    printf 'lake-shake\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
-    fix=0
-    explain=0
-    for argument in "$@"; do
-      if [ "$argument" = "--fix" ]; then
-        fix=1
-      fi
-      if [ "$argument" = "--explain" ]; then
-        explain=1
-      fi
-    done
-    if [ "${LEV_TEST_SHAKE_REQUIRE_BUILD:-}" = "1" ] &&
-       [ ! -f "${LEV_TEST_SHAKE_BUILD_MARKER:?}" ]; then
-      echo "error: there are out of date oleans; run \`lake build\` first" >&2
-      exit 1
-    fi
-    if [ "$explain" = "1" ]; then
-      if [ -n "${LEV_TEST_SHAKE_EXPLAIN_FILE:-}" ]; then
-        printf '%s:\n' "$LEV_TEST_SHAKE_EXPLAIN_FILE"
-      fi
-      if [ -n "${LEV_TEST_SHAKE_EXPLAIN_SECOND_FILE:-}" ]; then
-        printf '%s:\n' "$LEV_TEST_SHAKE_EXPLAIN_SECOND_FILE"
-      fi
-    fi
-    if [ "${LEV_TEST_SHAKE_SUGGEST:-}" = "1" ]; then
-      printf '%s:\n' "${LEV_TEST_SHAKE_FILE:?}"
-      echo "  remove #[import Mathlib]"
-      echo "  add #[import Mathlib.Data.Nat.Prime.Basic]"
-      if [ -n "${LEV_TEST_SHAKE_SECOND_FILE:-}" ]; then
-        printf '%s:\n' "$LEV_TEST_SHAKE_SECOND_FILE"
-        echo "  remove #[import Mathlib]"
-        echo "  add #[import Mathlib.Algebra.Order.Ring.Nat]"
-      fi
-      if [ "$fix" = "1" ]; then
-        cp "${LEV_TEST_SHAKE_REPLACEMENT_FILE:?}" "$LEV_TEST_SHAKE_FILE"
-        count=1
-        if [ -n "${LEV_TEST_SHAKE_SECOND_FILE:-}" ]; then
-          cp "${LEV_TEST_SHAKE_SECOND_REPLACEMENT_FILE:?}" "$LEV_TEST_SHAKE_SECOND_FILE"
-          count=2
-        fi
-        printf 'Successfully applied %s suggestions.\n' "$count"
-        exit 0
-      fi
-      exit "${LEV_TEST_SHAKE_SUGGEST_EXIT:-1}"
-    fi
-    exit 0
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "exe" ]; then
-    printf 'lake-exe\t%s\t%s\n' "$PWD" "${3:-}" >> "$LEV_TEST_LOG"
-    if [ -n "${LEV_TEST_TOOL_ARGS_FILE:-}" ]; then
-      shift 4
-      printf '%s\n' "$@" > "$LEV_TEST_TOOL_ARGS_FILE"
-    fi
-    exit 0
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "--rehash" ] && [ "${3:-}" = "build" ]; then
-    printf 'lake-build\t%s\t%s\n' "$PWD" "$*" >> "$LEV_TEST_LOG"
-    if [ "${LEV_TEST_LAKE_BUILD_FAIL_MEMBER:-}" = "$(basename "$PWD")" ]; then
-      exit "${LEV_TEST_LAKE_BUILD_EXIT:-37}"
-    fi
-    exit 0
-  fi
-
-  if [ "${1:-}" = "lake" ] && [ "${2:-}" = "upload" ]; then
-    printf 'lake-upload\t%s\t%s\n' "$PWD" "${3:-}" >> "$LEV_TEST_LOG"
-    exit "${LEV_TEST_LAKE_UPLOAD_EXIT:-0}"
-  fi
-
-  export ELAN_TOOLCHAIN="$toolchain"
-  exec "$@"
 fi
 
 echo "unexpected fake elan invocation: $*" >&2

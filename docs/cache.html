@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="lev cache status and lev cache gc inventory and prune lev's caches and Lake's artifact cache.">
+    <title>Cache | lev documentation</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script defer src="vendor/highlight.min.js"></script>
+    <script defer src="vendor/highlightjs-lean.min.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body data-page="cache">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="topbar">
+      <a class="brand" href="index.html" aria-label="lev documentation home"><span class="brand-mark" aria-hidden="true">l</span><span>lev docs</span></a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav" data-nav-toggle>Menu</button>
+      <nav class="top-links" aria-label="Related links"><a href="https://github.com/Robertboy18/lev">GitHub</a><a href="https://lean-lang.org/">Lean</a><a href="https://github.com/leanprover/lake">Lake</a></nav>
+    </header>
+    <button class="nav-scrim" type="button" aria-label="Close menu" data-nav-close></button>
+    <div class="docs-shell">
+      <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
+        <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
+        <div class="nav-group"><p class="nav-group-title">Guides</p><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="checking.html" data-page-link="checking">Checking</a><a href="cache.html" data-page-link="cache">Cache</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+      </nav></div></aside>
+      <main id="main-content"><div class="article-shell"><article class="article">
+        <header class="page-header"><p class="eyebrow">Guide</p><h1>Keeping the caches in check</h1><p class="lead">Lake's artifact cache only grows, and <code>lev check</code> keeps an exporter, a reference and a verdict per slice. <code>lev cache status</code> shows what is there. <code>lev cache gc</code> lists what nothing uses any more, in lev's own caches and with <code>--lake</code> in Lake's, and deletes it when you pass <code>--apply</code>.</p></header>
+
+        <section id="keeps"><h2>What lev keeps</h2>
+          <p>lev's cache directory is <code>--cache-dir</code>, else <code>LEV_CACHE_DIR</code>, else <code>$XDG_CACHE_HOME/lev</code>, else <code>~/.cache/lev</code> on Linux, <code>~/Library/Caches/lev</code> on macOS and <code>%LOCALAPPDATA%\lev\cache</code> on Windows.</p>
+          <div class="command-block output-block"><div class="command-label">Layout</div><pre><code>projects-v2/&lt;hash&gt;.json                  one record per project lev built or checked
+locks/                                   lock files
+check-v1/exporters/&lt;toolchain&gt;-&lt;key&gt;/    lev-export, built with that toolchain
+check-v1/references/&lt;toolchain&gt;-&lt;key&gt;/   the export of the toolchain's Init
+check-v1/verdicts/                       one small file per kernel and slice
+check-v1/scratch/                        exports and slice files of running checks</code></pre></div>
+          <p>A project record holds the project's root, its toolchain, the Lake artifact cache its last build used, and when lev last used it. With Lean <code>v4.36.0-rc2</code> an exporter build takes about 120 MiB and a reference about 355 MiB. A verdict is a few hundred bytes; Mathlib has about 11,000 slices per kernel.</p>
+        </section>
+
+        <section id="status"><h2>lev cache status</h2>
+          <div class="command-block output-block"><div class="command-label">lev cache status</div><pre><code>lev cache   .../cache (476.7 MiB)
+projects    1 registered, 0 no longer on disk
+check cache .../cache/check-v1
+  exporters   1 (121.8 MiB)
+  references  1 (354.9 MiB)
+  verdicts    6 (19.3 KiB)
+  scratch     0 (0 B)
+Lake cache  .../toolchains/leanprover--lean4---v4.36.0-rc2/lake/cache (1 project)
+  artifacts   31426 (947.0 MiB), 0 hard-linked (0 B)
+  mappings    65698
+  unmapped    0 artifacts (0 B)
+  missing     0</code></pre></div>
+          <p>For every Lake cache a registered project used, status counts the artifacts (and how many are hard-linked from a build directory, which removing would not free), the mappings from a build's input hash to its outputs, the artifacts no mapping names, and the local mappings whose artifacts are missing. It exits 1 when there is such a missing artifact, since Lake would then fail to restore that build.</p>
+        </section>
+
+        <section id="gc"><h2>lev cache gc</h2>
+          <div class="command-block"><div class="command-label">Terminal</div><pre><code>lev cache gc
+lev cache gc --lake --max-age-days 7 --json
+lev cache gc --lake --apply</code></pre></div>
+          <p>Without <code>--apply</code> the command only lists. Without <code>--lake</code> it leaves Lake's caches alone and lists only lev's own entries. Each line names the kind of entry, its size and its path:</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col">Kind</th><th scope="col">Listed when</th></tr></thead><tbody>
+            <tr><th scope="row"><code>project-record</code></th><td>The project's <code>lean-toolchain</code> is gone and lev last used it before the age gate.</td></tr>
+            <tr><th scope="row"><code>staging-file</code></th><td>An interrupted record write older than the gate.</td></tr>
+            <tr><th scope="row"><code>check-exporter</code>, <code>check-reference</code></th><td>No check used it within the gate.</td></tr>
+            <tr><th scope="row"><code>check-verdict</code></th><td>No check reused it within the gate. A check touches every verdict it reuses.</td></tr>
+            <tr><th scope="row"><code>check-scratch</code></th><td>Left behind by an interrupted check and older than the gate.</td></tr>
+            <tr><th scope="row"><code>lake-mapping</code></th><td>With <code>--lake</code>: no live registered project's traces have its input hash, and it is older than the gate.</td></tr>
+            <tr><th scope="row"><code>lake-artifact</code></th><td>With <code>--lake</code>: neither those traces nor a kept mapping names it, it is older than the gate, and no build directory hard-links it.</td></tr>
+          </tbody></table></div>
+          <p>The gate is 30 days unless <code>--max-age-days N</code> says otherwise. A Lake cache with Lake's older <code>inputs/</code> layout, or with missing artifacts, is reported and left alone. So is a Lake cache whose references lev could not read in full: a registered project that uses it has a trace lev cannot read or parse, a manifest it cannot read, or a lakefile that mentions <code>buildDir</code>, since lev reads traces only below <code>.lake/build</code>. A collected Lake cache that is not a registered project's own <code>.lake/cache</code>, such as the toolchain's default cache, is listed as shared: projects lev has not registered may use it too.</p>
+        </section>
+
+        <section id="protection"><h2>What protects an entry</h2>
+          <p>Lake's entries are protected by the traces of live registered projects: a project registers itself whenever you run <code>lev inspect build</code> or <code>lev check</code> in it, and stays live while its <code>lean-toolchain</code> file exists. A Lake build of a project lev has never seen is not protected, so read the list before you apply it, especially when the cache is the toolchain's default one that every project on the machine shares. The caches of <code>lev check</code> are protected by use alone; a removed exporter, reference or verdict is rebuilt by the next check.</p>
+        </section>
+
+        <section id="locks"><h2>Locks</h2>
+          <p><code>lev inspect build</code> and <code>lev check</code> hold a shared lock on the Lake cache they build into, and <code>lev check</code> holds a shared lock on its own caches. <code>lev cache gc</code> takes those locks exclusively before it reads the registry and any trace, and reads the registry again when it names a Lake cache it has not locked yet, so it waits for running builds and checks, sees the projects they registered, and they wait for it. Processes that do not take the locks, such as a plain <code>lake build</code>, are not excluded.</p>
+        </section>
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="checking.html"><small>Previous</small><strong>Checking</strong></a><a href="reference.html"><small>Next</small><strong>Command reference</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#keeps">What lev keeps</a><a href="#status">lev cache status</a><a href="#gc">lev cache gc</a><a href="#protection">What protects an entry</a><a href="#locks">Locks</a></nav></div></main>
+    </div>
+  </body>
+</html>

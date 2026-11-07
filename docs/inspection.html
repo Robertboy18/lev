@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Inspect a Lean environment, build failures, dependency pins, declarations, project trust, and Lake rebuild decisions with lev.">
+    <meta name="description" content="lev inspect build runs one Lake build and explains from Lake's traces why each module rebuilt.">
     <title>Inspection | lev documentation</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
@@ -22,401 +22,61 @@
     <div class="docs-shell">
       <aside class="sidebar" id="docs-nav" aria-label="Documentation navigation"><div class="sidebar-inner"><nav class="section-nav" aria-label="Documentation sections">
         <div class="nav-group"><p class="nav-group-title">Start</p><a href="index.html" data-page-link="overview">Overview</a><a href="getting-started.html" data-page-link="getting-started">Getting started</a></div>
-        <div class="nav-group"><p class="nav-group-title">Core guides</p><a href="environments.html" data-page-link="environments">Environments &amp; cache</a><a href="imports.html" data-page-link="imports">Import minimization</a><a href="imports-workflows.html" data-page-link="imports-workflows">Import workflows</a><a href="imports-policy.html" data-page-link="imports-policy">Import policy &amp; coverage</a><a href="imports-in-practice.html" data-page-link="imports-practice">Import graphs &amp; case study</a><a href="profiling.html" data-page-link="profiling">Profiling overview</a><a href="profiling-measurement.html" data-page-link="profiling-measurement">Timing &amp; samples</a><a href="profiling-lean.html" data-page-link="profiling-lean">Lean profiler</a><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="automation.html" data-page-link="automation">Automation</a></div>
-        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="contracts.html" data-page-link="contracts">JSON contracts</a><a href="schema-inventory.html" data-page-link="schema-inventory">Schema inventory</a><a href="diagnostics.html" data-page-link="diagnostics">Diagnostics &amp; exits</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
+        <div class="nav-group"><p class="nav-group-title">Guides</p><a href="inspection.html" data-page-link="inspection">Inspection</a><a href="checking.html" data-page-link="checking">Checking</a><a href="cache.html" data-page-link="cache">Cache</a></div>
+        <div class="nav-group"><p class="nav-group-title">Reference</p><a href="reference.html" data-page-link="reference">Command reference</a><a href="https://github.com/Robertboy18/lev/blob/main/.agents/skills/lev/SKILL.md">Agent skill</a></div>
       </nav></div></aside>
       <main id="main-content"><div class="article-shell"><article class="article">
-        <header class="page-header">
-          <p class="eyebrow">Inspection</p>
-          <h1>Inspect a Lean project</h1>
-          <p class="lead"><code>lev inspect</code> reads the checkout, Lake traces, manifests, and Lean indexes to explain what changed, which dependency revision won, where a declaration lives, and which axioms it reaches.</p>
-          <div class="meta-row"><span>Local environment</span><span>Build evidence</span><span>Lean-checked types</span></div>
-        </header>
+        <header class="page-header"><p class="eyebrow">Guide</p><h1>Why did that rebuild?</h1><p class="lead"><code>lev inspect build</code> runs one Lake build and explains, from the traces Lake writes, why each module rebuilt.</p></header>
 
-        <section id="questions">
-          <h2>Inspection command map</h2>
-          <p>A successful build tells you Lean accepted the project. It does not tell you which recorded target inputs changed, which module defines a declaration, or whether a theorem reaches an axiom through several definitions.</p>
-          <div class="table-wrap"><table><thead><tr><th scope="col">Problem</th><th scope="col">Command</th><th scope="col">What it checks</th></tr></thead><tbody>
-            <tr><th scope="row">A broken checkout and very little context</th><td><code>lev inspect</code></td><td>It gives you one bounded snapshot before any repair step changes the machine or the project.</td></tr>
-            <tr><th scope="row">A machine-specific failure</th><td><code>lev inspect environment</code></td><td>It tells you which runtime, tools, cache paths, and workspace state this checkout will actually use.</td></tr>
-            <tr><th scope="row">A surprising rebuild or cache miss</th><td><code>lev inspect build</code></td><td>It compares Lake trace inputs and shows which edges changed around the build.</td></tr>
-            <tr><th scope="row">A dependency revision that looks wrong</th><td><code>lev inspect dependencies</code></td><td>It names which parent requested what and whether the selected revision aligned, conflicted, or overrode.</td></tr>
-            <tr><th scope="row">A theorem or definition you cannot place quickly</th><td><code>lev inspect declaration NAME</code></td><td>It finds the module and source range, then asks Lean for the declaration's type.</td></tr>
-          </tbody></table></div>
-          <div class="command-grid">
-            <div><code>lev inspect</code><span>Summarize the project, configuration, lock, toolchain, and available metadata.</span></div>
-            <div><code>lev inspect environment</code><span>Read local tools, paths, caches, and workspace state without changing them.</span></div>
-            <div><code>lev inspect build</code><span>Run a verbose build and compare Lake trace inputs before and after it.</span></div>
-            <div><code>lev inspect dependencies</code><span>Show which parent requested each selected dependency revision.</span></div>
-            <div><code>lev inspect declaration NAME</code><span>Find the module and source range, then ask Lean for the declaration's type.</span></div>
-            <div><code>lev inspect trust</code><span>Walk every indexed project declaration and report transitive axioms and unsafe definitions.</span></div>
-            <div><code>lev inspect performance</code><span>Measure repeated commands. The <a href="profiling.html">profiling guide</a> covers samples and native Lean traces.</span></div>
-          </div>
-          <aside role="note" class="note"><strong>Short names for familiar jobs remain on the first help screen.</strong> <code>lev doctor</code> runs <code>lev inspect environment</code>; <code>lev shake</code> runs the import workflow under <code>lev inspect imports</code>; and <code>lev profile</code> handles repeated command measurements. Project-wide file profiling stays under <code>lev inspect performance --files</code>.</aside>
-        </section>
-
-        <section id="diagnosis">
-          <h2>Project diagnosis</h2>
-          <p>When a project fails on one machine but not another, the first useful artifact is usually a small inventory: which root did the command discover, which toolchain did it select, can the Lakefile and manifest be parsed, does the lock agree, and is there any build metadata to inspect? Bare <code>lev inspect</code> collects that without synchronizing, building, or repairing anything.</p>
-          <div class="command-block"><div class="command-label">Keep the report with a bug or CI artifact</div><pre><code>lev inspect
-lev inspect --json
-lev inspect --json &gt; lev-diagnosis.json</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Example diagnosis with temporary paths shortened</div><pre><code>Lev 1.0.0 diagnosis
-host: linux-x86_64
-start: /tmp/lev-doc-example.A1b2C3/project
-cache: /tmp/lev-doc-example.A1b2C3/cache
-toolchains: /tmp/lev-doc-example.A1b2C3/data/toolchains-v1
-
-Project
-  root: /tmp/lev-doc-example.A1b2C3/project
-  toolchain: leanprover/lean4:v4.docs
-  Lakefile: /tmp/lev-doc-example.A1b2C3/project/lakefile.toml (toml)
-  manifest: /tmp/lev-doc-example.A1b2C3/project/lake-manifest.json (0 packages)
-  lev.toml: absent
-  configured tasks/checks: 0/0
-  build metadata: absent
-  runtime: elan
-
-Checks
-  PASS  project    found /tmp/lev-doc-example.A1b2C3/project
-  PASS  lakefile   parsed lakefile.toml (0 direct dependencies)
-  PASS  manifest   parsed lake-manifest.json (0 packages)
-  WARN  lock       lev.lock is missing; run `lev lock`
-  PASS  lev.toml   no lev.toml; ordinary Lake defaults are active
-  PASS  toolchain  leanprover/lean4:v4.docs is available through elan
-
-Summary: 5 passed, 1 warnings, 0 errors
-
-Next
-  lev inspect build
-  lev inspect dependencies
-  lev inspect performance --files
-  lev inspect imports --coverage
-  lev inspect trust
-  lev check</code></pre></div>
-          <p class="example-caption">Repeated project paths are shortened here so the page stays readable. The command itself prints complete paths, which is what you want in a bug report or CI artifact.</p>
-          <div class="table-wrap"><table><thead><tr><th scope="col">Finding</th><th scope="col">Next step</th></tr></thead><tbody>
-            <tr><th scope="row"><code>WARN lock</code></th><td>If the project is ready to record its environment, run <code>lev lock</code> and review the new <code>lev.lock</code>.</td></tr>
-            <tr><th scope="row"><code>build metadata: absent</code></th><td>Run <code>lev inspect build</code> or <code>lev build</code> before asking rebuild-causality questions.</td></tr>
-            <tr><th scope="row"><code>Next</code></th><td>Run the relevant narrow inspector. Do not delete caches unless its evidence points there.</td></tr>
-          </tbody></table></div>
-          <aside role="note" class="note"><strong>This report is for collection, not enforcement.</strong> Bare <code>lev inspect</code> returns status 0 after writing its report even when the summary contains errors. That makes it useful when you are gathering evidence from a broken checkout. <code>lev check</code> is the policy command: it stops at the first failed configuration, lock, dependency, audit, toolchain, build, task, import, or trust phase and returns nonzero.</aside>
-        </section>
-
-        <section id="environment">
-          <h2>Check the machine without changing it</h2>
-          <p>Use the environment report to see which <code>lean</code> and <code>lake</code> the checkout will run, where lev stores local state, and whether the directory belongs to a configured workspace.</p>
-          <p>The command checks Git and elan, resolves the selected runtime, asks that runtime for Lean and Lake versions, reads the project files, and inspects Lev's registry, artifact-cache path, workspace configuration, and managed-workspace marker. It does not synchronize dependencies, create cache directories, or crawl <code>.lake</code>.</p>
-          <div class="command-block"><div class="command-label">Environment report</div><pre><code>lev inspect environment
-lev inspect environment --json
-lev inspect environment --json -o environment.json
-
-# Visible direct command, same report
-lev doctor --json -o environment.json</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Environment report</div><pre><code>Lev 1.0.0 environment
-Host: linux-x86_64
-
-Locations
-  project start: /tmp/lev-doc-env.Rt42/project
-  lev cache: /tmp/lev-doc-env.Rt42/lev-cache
-  toolchain data: /tmp/lev-doc-env.Rt42/lev-data/toolchains-v1
-
-Tools
-  Git: git version 2.50.1
-  elan: elan 4.2.3 (b6cec7e10 2026-06-08)
-  project: /tmp/lev-doc-env.Rt42/project
-  toolchain: leanprover/lean4:v4.30.0
-  runtime: elan
-  Lean: Lean (version 4.30.0, x86_64-unknown-linux-gnu, commit d024af099ca4bf2c86f649261ebf59565dc8c622, Release)
-  Lake: Lake version 5.0.0-src+d024af0 (Lean version 4.30.0)
-
-Local state
-  registry: /tmp/lev-doc-env.Rt42/lev-cache/projects-v1 (0 records, 0 stale)
-  Lake artifact cache: /tmp/lev-doc-env.Rt42/lev-cache/lake-v1/95902a685e480b41 (not created)
-  workspace: not configured
-  managed local workspace: no
-
-Findings
-  PASS  environment.locations            resolved the project start, cache, and toolchain data paths
-  PASS  environment.git.version          git version 2.50.1
-  PASS  environment.elan.version         elan 4.2.3 (b6cec7e10 2026-06-08)
-  PASS  project.discovery                found /tmp/lev-doc-env.Rt42/project
-  PASS  project.toolchain_file           selected leanprover/lean4:v4.30.0
-  PASS  project.lakefile                 parsed /tmp/lev-doc-env.Rt42/project/lakefile.toml with 0 direct dependencies
-  WARN  project.manifest                 /tmp/lev-doc-env.Rt42/project/lake-manifest.json is missing
-  WARN  project.lock                     /tmp/lev-doc-env.Rt42/project/lev.lock is missing
-  PASS  project.lev_config               no lev.toml; Lake defaults are active
-  PASS  environment.runtime.selected     leanprover/lean4:v4.30.0 will run through elan
-  PASS  environment.lean.version         Lean (version 4.30.0, x86_64-unknown-linux-gnu, commit d024af099ca4bf2c86f649261ebf59565dc8c622, Release)
-  PASS  environment.lake.version         Lake version 5.0.0-src+d024af0 (Lean version 4.30.0)
-  PASS  cache.artifacts.path             selected cache directory has not been created at /tmp/lev-doc-env.Rt42/lev-cache/lake-v1/95902a685e480b41
-  PASS  cache.registry.records           parsed 0 project records
-  PASS  cache.registry.staleness         all parsed project records still match their project
-  N/A   workspace.configuration          no ancestor lev.toml declares [workspace]
-  N/A   workspace.validity               no ancestor lev.toml declares [workspace]
-  N/A   workspace.lock                   no ancestor lev.toml declares [workspace]
-  PASS  workspace.managed_local          /tmp/lev-doc-env.Rt42/project is a user-owned project
-
-Summary: 14 passed, 2 warnings, 0 errors, 3 not applicable</code></pre></div>
-          <p class="example-caption">The missing manifest and lock remain visible as findings. The inspector observes the machine and checkout without creating either file.</p>
-          <figure class="diagram">
-            <figcaption>The inspector stays on bounded files and commands. It reports the state it finds and leaves repair to an explicit command.</figcaption>
-            <div class="flow" role="img" aria-label="Lev reads project selection, resolves the runtime, checks bounded local state, and emits findings without changing the environment">
-              <div class="flow-node"><strong>Project selection</strong><span>toolchain and Lake files</span></div>
-              <div class="flow-node emphasis"><strong>Selected runtime</strong><span>Lev store or elan</span></div>
-              <div class="flow-node"><strong>Local state</strong><span>registry, cache, workspace</span></div>
-              <div class="flow-node"><strong>Findings</strong><span>evidence and next steps</span></div>
-            </div>
-          </figure>
-          <h3>One finding, field by field</h3>
-          <p>The JSON report uses the same Finding shape as Lev's other diagnostics. A finding records the observed condition and its evidence before any policy decides whether it should stop a run.</p>
-          <div class="command-block output-block"><div class="command-label">Selected runtime finding</div><pre><code class="language-json">{
-  "id": "environment.runtime.selected",
-  "category": "environment",
-  "state": "passed",
-  "severity": "info",
-  "title": "Selected runtime",
-  "detail": "leanprover/lean4:v4.30.0 will run through elan",
-  "evidence": {
-    "source": "elan",
-    "toolchain": "leanprover/lean4:v4.30.0"
-  },
-  "policy": "observe"
-}</code></pre></div>
-          <p><code>id</code> is the stable key for scripts. <code>state</code> says whether the check passed, raised a finding, or did not apply. <code>severity</code> classifies what Lev observed. <code>policy</code> is separate: <code>observe</code> records the result, while <code>fail</code> makes a policy command reject it. Optional <code>remediation</code> and <code>elapsed_ms</code> fields appear when Lev has a concrete next step or timing.</p>
-          <aside role="note" class="note"><strong>An error finding does not automatically fail an inspection.</strong> For example, a malformed local registry is reported with <code>severity: "error"</code>, but <code>lev inspect environment</code> still returns 0 because its findings use <code>policy: "observe"</code>. A check command fails only when its policy says so.</aside>
-        </section>
-
-        <section id="dependencies">
-          <h2>Dependency revision selection</h2>
-          <p>Lake can receive different revisions of the same package through different parents. In <a href="https://github.com/leanprover/lean4/issues/13084">Lean issue #13084</a>, <code>reference-manual</code> selected a <code>subverso</code> revision requested by <code>versowebcomponents</code>; the root requirement appeared earlier but did not win. David Christiansen suggested warning when direct dependencies pin an indirect dependency differently and naming which one wins. The report shows which revision was selected and what each parent requested.</p>
-          <div class="command-block"><div class="command-label">Inspect the current selection</div><pre><code>lev inspect dependencies
-lev inspect dependencies --json
-lev inspect dependencies --json -o dependency-pins.json</code></pre></div>
-          <figure class="diagram">
-            <figcaption>Lev follows the evidence already on disk. It does not ask Lake to resolve the graph again.</figcaption>
-            <div class="flow" role="img" aria-label="Lev reads root selections, reads direct requests from materialized parent manifests, compares exact revisions, and assigns an explicit evidence status">
-              <div class="flow-node"><strong>Root selections</strong><span>chosen package revisions</span></div>
-              <div class="flow-node"><strong>Parent requests</strong><span>direct manifest entries</span></div>
-              <div class="flow-node emphasis"><strong>Exact comparison</strong><span>selected versus requested</span></div>
-              <div class="flow-node"><strong>Evidence status</strong><span>aligned, conflict, override, stale, unknown</span></div>
-            </div>
-          </figure>
-          <div class="command-block output-block"><div class="command-label">The six-package graph from the contract test</div><pre><code>dependency pins for root: 2 aligned, 1 conflict, 1 root override, 1 stale, 1 unknown
-CONFLICT aaaaaaaaaaaa conflict
-  requested by parent-a: aaaaaaaaaaaa
-  requested by parent-b: bbbbbbbbbbbb
-OVERRIDE aaaaaaaaaaaa override
-  requested by parent-a: bbbbbbbbbbbb
-  requested by root: aaaaaaaaaaaa
-ALIGNED  aaaaaaaaaaaa parent-a
-  requested by root: aaaaaaaaaaaa
-ALIGNED  aaaaaaaaaaaa parent-b
-  requested by root: aaaaaaaaaaaa
-STALE    aaaaaaaaaaaa stale
-  requested by parent-a: bbbbbbbbbbbb
-  requested by parent-b: cccccccccccc
-UNKNOWN  -            unknown
-  requested by root: -</code></pre></div>
-          <p class="example-caption">This example comes from a lev CLI contract test. The repeated letters make the three revisions easy to distinguish; they are not package commits from a real project.</p>
-          <div class="table-wrap"><table>
-            <thead><tr><th scope="col">Status</th><th scope="col">What Lev proved</th><th scope="col"><code>lev check</code></th></tr></thead>
-            <tbody>
-              <tr><th scope="row"><code>aligned</code></th><td>The selected revision matches every complete known request.</td><td>Pass</td></tr>
-              <tr><th scope="row"><code>conflict</code></th><td>Parents request different revisions and the inherited selection matches one of them.</td><td>Pass with detail</td></tr>
-              <tr><th scope="row"><code>root_override</code></th><td>The root project's direct selection matches the root request while another parent requests a different revision.</td><td>Pass with detail</td></tr>
-              <tr><th scope="row"><code>stale</code></th><td>The selected revision matches none of the complete known requests.</td><td>Fail</td></tr>
-              <tr><th scope="row"><code>unknown</code></th><td>A parent manifest, selected revision, or other required evidence is missing.</td><td>Pass without guessing</td></tr>
-            </tbody>
-          </table></div>
-          <p>Lev reads the root <code>lake-manifest.json</code> and each materialized parent's manifest. The command is read-only: it never runs dependency resolution, updates a revision, or edits a manifest. One missing parent makes any conclusion that depends on complete evidence <code>unknown</code>; Lev names the missing manifest in <code>warnings</code>. Only a provably stale selection fails the dependency phase of <code>lev check</code>.</p>
-        </section>
-
-        <section id="build">
-          <h2>Build trace changes</h2>
-          <p>Lake records a trace beside a built target. The trace contains the inputs Lake used to decide whether the result was current. <code>lev inspect build</code> snapshots those files, runs <code>lake --verbose build</code>, then compares the snapshots. The verbose stream says what Lake labeled <code>Built</code>, <code>Replayed</code>, <code>Reused</code>, <code>Fetched</code>, <code>Ran</code>, or <code>Unpacked</code>. The trace comparison identifies changed source, dependency, option, toolchain, and configuration inputs when Lake labels them.</p>
-          <p>For a changed project source, Lev also reads the project's import graph in reverse. If <code>B</code> imports <code>A</code> and <code>C</code> imports <code>B</code>, changing <code>A</code> makes <code>A</code>, <code>B</code>, and <code>C</code> part of the potential source impact. That says where the edit could matter. It stays separate from the modules Lake reported as built during this run.</p>
-          <p><a href="https://github.com/leanprover/lean4/issues/7280">Lean issue #7280</a> shows how one failed dependency can produce a long tail of transitive build failures. Lev keeps location-bearing Lean diagnostics, removes duplicate messages, and lists failed targets separately. The compatibility field <code>root_causes</code> contains diagnostic leads; it does not claim that every early line caused every later failure.</p>
-          <p>In a <a href="https://leanprover-community.github.io/archive/stream/270676-lean4/topic/Unwanted.20Mathlib.20recompilation.20after.20adding.20as.20a.20dependency.html#573936514">February 2026 Zulip thread</a>, a project appeared to compile Mathlib twice. The extra work came from an executable target created by the project template. <a href="https://github.com/leanprover/lake/issues/153">Lake issue #153</a> records another case where files appeared to build twice instead of reusing prior work. The inspector puts target names, visible trace inputs, and observed build events beside each other so you can see exactly which evidence Lake left behind.</p>
-          <figure class="diagram">
-            <figcaption>Observed build events and potential source impact answer different questions, so the report keeps them apart.</figcaption>
-            <div class="flow" role="img" aria-label="Lake verbose events provide observed built modules, while changed source trace inputs feed a reverse import graph that provides potential project impact">
-              <div class="flow-node"><strong>Lake events</strong><span>observed Built modules</span></div>
-              <div class="flow-node"><strong>Trace comparison</strong><span>changed project sources</span></div>
-              <div class="flow-node emphasis"><strong>Reverse imports</strong><span>shortest source paths</span></div>
-              <div class="flow-node"><strong>Causality report</strong><span>observed versus potential</span></div>
-            </div>
-          </figure>
-          <div class="command-block"><div class="command-label">A three-module source path</div><pre><code>edited A.lean
-   +-- Lake verbose event --------------&gt; observed Built: A
-   `-- reverse project imports ---------&gt; potential: A, B, C
-                                             A -&gt; B -&gt; C</code></pre></div>
+        <section id="how"><h2>How it works</h2>
+          <p>Lake writes a <code>.trace</code> file next to every module it builds. The trace lists the inputs Lake hashed to decide whether the module was current: the source file, each import, the options, the Lean commit, and the package configuration. lev reads the trace of every module in every package of the workspace (the root package and everything in <code>lake-manifest.json</code>), runs <code>lake --verbose build</code> through elan with Lake's output passing through on stderr, and reads the traces again. A module whose trace changed is reported with the inputs that changed.</p>
           <div class="command-block"><div class="command-label">Terminal</div><pre><code>lev inspect build
-lev inspect build MyLibrary
-lev inspect build --json -o build-inspection.json</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Report after editing Demo.Root</div><pre><code>build passed in 749.443 ms: 3 built, 0 replayed, 3 ran, 0 reused, 0 fetched, 0 unpacked
-RAN                    job computation
-RAN                    demo:extraDep
-BUILT       234.000 ms  Demo.Root
-BUILT       231.000 ms  Demo.UsesRoot
-BUILT       228.000 ms  Demo
-RAN                    demo/Demo:default
-trace inputs:
-  Demo [changed]: one or more labeled Lake trace inputs changed
-    dependency: Demo:deps / deps / imports / Demo.UsesRoot transitive imports (legacy)
-    dependency: Demo:deps / deps / imports / Demo.UsesRoot:importAllArts
-  Demo.Root [changed]: one or more labeled Lake trace inputs changed
-    source: /tmp/lev-doc-env.Rt42/project/Demo/Root.lean
-  Demo.UsesRoot [changed]: one or more labeled Lake trace inputs changed
-    dependency: Demo.UsesRoot:deps / deps / imports / Demo.Root:importAllArts
-causality:
-  changed source modules: Demo.Root
-  Lake-reported built modules: Demo, Demo.Root, Demo.UsesRoot
-  potential project impact: Demo, Demo.Root, Demo.UsesRoot
-    could affect: Demo.Root -&gt; Demo.UsesRoot -&gt; Demo
-    could affect: Demo.Root
-    could affect: Demo.Root -&gt; Demo.UsesRoot</code></pre></div>
-          <p class="example-caption">This example starts from an initial build, edits <code>Demo/Root.lean</code>, then inspects the next verbose build. The elapsed values are ordinary command output; use the module lists and trace-input labels to understand why Lake considered work current or stale.</p>
-          <div class="command-block output-block"><div class="command-label">Selected causality fields from the same JSON report</div><pre><code class="language-json">{
-  "source_graph_available": true,
-  "changed_project_modules": ["Demo.Root"],
-  "observed_rebuilt_modules": [
-    "Demo",
-    "Demo.Root",
-    "Demo.UsesRoot"
-  ],
-  "evidence_kinds": [
-    "observed_trace",
-    "source_import_graph"
-  ],
-  "potential_affected_modules": [
-    "Demo",
-    "Demo.Root",
-    "Demo.UsesRoot"
-  ],
-  "missing_evidence": [],
-  "warnings": []
-}</code></pre></div>
-          <aside role="note" class="note"><strong>How to read <code>Ran</code> and <code>Built</code>.</strong> Lake 5 labels routine work such as facets and default targets as <code>Ran</code>. Lev preserves those events. A <code>Built</code> target remains unattributed when no changed trace target has the same name, because the available traces do not establish why it ran.</aside>
-          <p>The source graph records imports between project modules. Lake facets, custom <code>needs</code>, plugins, generated targets, external package internals, and Lake's complete job DAG remain outside that graph. A path such as <code>A -&gt; B -&gt; C</code> is the shortest source-import explanation Lev found; Lake may have scheduled the jobs through other dependencies.</p>
+lev inspect build -- Mathlib
+lev inspect build --why Mathlib.Order.Basic -- Mathlib
+lev -q inspect build --json</code></pre></div>
+          <p>Arguments after <code>--</code> go to <code>lake build</code> unchanged. The exit status is Lake's. <code>-q</code> keeps Lake's output off stderr when only the report matters. The run registers the project for <a href="cache.html">cache collection</a> and holds a shared lock on the Lake cache, so a <code>lev cache gc</code> started meanwhile waits.</p>
         </section>
 
-        <section id="declaration">
-          <h2>Find a declaration without guessing the import</h2>
-          <p>A declaration name is often easier to remember than its module. Lev searches bounded <code>.ilean</code> indexes from the project and its Lake dependencies. Once it has a candidate module, it writes a temporary Lean file containing that import and <code>#check NAME</code>. The displayed type therefore comes from the selected Lean environment, not from a text parser.</p>
-          <div class="code-pair">
-            <div class="command-block"><div class="command-label">Terminal</div><pre><code>lev inspect declaration usesShared
-
-lev inspect declaration Nat.add_comm \
-  --from Mathlib.Data.Nat.Basic
-
-lev inspect declaration usesShared --build --json</code></pre></div>
-            <div class="command-block output-block"><div class="command-label">Declaration output</div><pre><code>usesShared
-  type:    shared = trustBase + 1
-  module:  TrustSmoke.Basic
-  import:  import TrustSmoke.Basic
-  package: TrustSmoke
-  source:  /tmp/lev-trust-432.jxybrG/TrustSmoke/Basic.lean:5:9</code></pre></div>
-          </div>
-          <p><code>--build</code> refreshes metadata before searching. <code>--from MODULE</code> skips index discovery when you already know the module or need a declaration from the Lean toolchain itself. If the same name appears in several indexed modules, lev asks you to choose rather than picking the first match.</p>
-        </section>
-
-        <section id="trust">
-          <h2>Project-wide trust audit</h2>
-          <p>A text search for <code>sorry</code> is useful while editing, but it answers a source-code question. Trust review needs the elaborated environment. A theorem can inherit <code>sorryAx</code>, <code>Classical.choice</code>, or a project axiom through declarations whose source contains none of those names. In <a href="https://github.com/leanprover-community/mathlib4/issues/272">mathlib issue #272</a>, a <code>nomatch</code> term unexpectedly introduced <code>sorryAx</code>; searching for a literal <code>sorry</code> would not have explained that result.</p>
-          <p>The scratch project below is small enough to see the transitive case. <code>usesShared</code> mentions <code>shared</code>; both depend on <code>trustBase</code>.</p>
-          <div class="code-pair">
-            <div class="command-block"><div class="command-label">TrustSmoke/Basic.lean</div><pre><code class="language-lean">axiom trustBase : Nat
-
-noncomputable def shared : Nat := trustBase + 1
-
-theorem usesShared : shared = trustBase + 1 := rfl
-
-unsafe def unchecked : Nat := 1</code></pre></div>
-            <div class="command-block output-block"><div class="command-label">lev inspect trust</div><pre><code>trust: scanned 4 of 4 indexed declarations;
-3 with axioms, 1 unsafe
-AXIOMS        shared
-  module: TrustSmoke.Basic
-  axioms: trustBase
-AXIOMS        trustBase
-  module: TrustSmoke.Basic
-  axioms: trustBase
-UNSAFE        unchecked
-  module: TrustSmoke.Basic
-AXIOMS        usesShared
-  module: TrustSmoke.Basic
-  axioms: trustBase
-policy: passed</code></pre></div>
-          </div>
-          <figure class="diagram">
-            <figcaption>Metadata supplies the project boundary and source locations. Lean supplies the trust result.</figcaption>
-            <div class="flow" role="img" aria-label="Lake builds ilean metadata, lev indexes local declaration names, generated Lean probes call collectAxioms for each indexed declaration, and lev joins complete results to source locations">
-              <div class="flow-node"><strong>Lake build</strong><span><code>.ilean</code> indexes</span></div>
-              <div class="flow-node"><strong>Project names</strong><span>module and source range</span></div>
-              <div class="flow-node emphasis"><strong>Lean probes</strong><span><code>collectAxioms</code> per name</span></div>
-              <div class="flow-node"><strong>Complete join</strong><span>findings, failures, policy</span></div>
-            </div>
-          </figure>
-          <p>Lev first reads the project's built <code>.ilean</code> files to obtain declaration names, owning modules, and source ranges. It then generates bounded Lean probes that import those modules and call Lean's built-in <code>collectAxioms</code> once for each indexed declaration. Each probe also reads the declaration's <code>isUnsafe</code> flag. Lev joins the returned records to the index; it does not reimplement Lean's axiom traversal in Rust.</p>
-          <p>That join must be complete. If Lean returns no record for an indexed name, or reports that the name was not found after its module was imported, lev counts a scan failure and exits with status 1. A partial scan cannot pass by quietly shrinking the denominator.</p>
-        </section>
-
-        <section id="comparison">
-          <h2>Source search, <code>#print axioms</code>, and project inspection</h2>
-          <div class="table-wrap"><table>
-            <thead><tr><th scope="col">Method</th><th scope="col">Question answered</th><th scope="col">Scope</th></tr></thead>
-            <tbody>
-              <tr><th scope="row"><code>rg '\bsorry\b'</code></th><td>Where does this token occur in source text?</td><td>Files selected by the search; comments and generated dependencies need separate handling.</td></tr>
-              <tr><th scope="row"><code>#print axioms myTheorem</code></th><td>Which axioms does Lean report for this declaration?</td><td>One declaration named in a Lean file.</td></tr>
-              <tr><th scope="row"><code>lev inspect trust</code></th><td>Which indexed project declarations reach axioms or are marked unsafe?</td><td>All declarations in the root project's built <code>.ilean</code> metadata, joined to module and source locations.</td></tr>
-            </tbody>
-          </table></div>
-          <p>None of these labels an axiom as a mistake. Projects use axioms for different reasons, and <code>Classical.choice</code> is common in noncomputable mathematics. Lev keeps discovery separate from policy so the project can state what it forbids.</p>
-        </section>
-
-        <section id="policy">
-          <h2>Trust policy</h2>
-          <p>When the scan completes, a plain trust inspection exits successfully after reporting its findings. Add one or more <code>--deny</code> flags or <code>--deny-unsafe</code> to make those findings fail CI.</p>
-          <div class="command-block"><div class="command-label">Policy examples</div><pre><code>lev inspect trust --deny sorryAx
-lev inspect trust --deny sorryAx --deny Classical.choice
-lev inspect trust --deny-unsafe
-lev inspect trust --deny trustBase --deny-unsafe --json
-lev inspect trust --no-build --json &gt; trust.json</code></pre></div>
-          <div class="command-block output-block"><div class="command-label">Selected JSON fields after denying trustBase and unsafe declarations</div><pre><code class="language-json">{
-  "schema": "lev.cli.inspect.trust/v1",
-  "data": {
-    "toolchain": "leanprover/lean4:v4.32.2",
-    "status": "failed",
-    "declarations_indexed": 4,
-    "declarations_scanned": 4,
-    "scan_failures": 0,
-    "declarations_with_axioms": 3,
-    "unsafe_declarations": 1,
-    "denied_axioms": ["trustBase"],
-    "deny_unsafe": true,
-    "policy_violations": 4
-  }
-}</code></pre></div>
-          <p>This excerpt keeps the counters together. The complete report also includes the project path, one structured entry per declaration in <code>findings</code>, and any index or scan messages in <code>warnings</code>.</p>
-          <p><code>--no-build</code> is useful after a separate build step. Without it, lev builds first so the index and environment agree. A denied axiom, denied unsafe declaration, or incomplete scan returns status 1. Build failures and malformed or conflicting indexes return an error before policy evaluation; <code>scan_failures</code> remains separate from <code>policy_violations</code> in JSON.</p>
-        </section>
-
-        <section id="limits">
-          <h2>What the reports can and cannot say</h2>
+        <section id="report"><h2>Reading the report</h2>
+          <p>After adding a definition to <code>Demo/A.lean</code> in a library where <code>Demo.B</code> imports <code>Demo.A</code> and the root <code>Demo</code> imports <code>Demo.B</code>:</p>
+          <div class="command-block output-block"><div class="command-label">lev inspect build --why Demo</div><pre><code>build passed in 0.251 s: 3 built, 0 fetched, 0 unpacked, 0 replayed, 0 reused, 6 ran
+traces: 3 changed, 0 new, 0 removed
+causes: 1 source, 2 import
+edited: Demo.A
+slowest:
+          64 ms  Demo.B
+          59 ms  Demo.A
+          52 ms  Demo
+why:
+  Demo: import Demo.B
+  Demo.B: import Demo.A
+  Demo.A: source .../demo/Demo/A.lean</code></pre></div>
           <ul>
-            <li>Dependency inspection can explain only requests present in the root and materialized parent manifests. Missing parent manifests or revisions produce <code>unknown</code>, not a reconstructed guess. The report describes the recorded graph; it does not predict what a fresh Lake update would select.</li>
-            <li>Build inspection reports changes visible in Lake's persisted trace format. A <code>Built</code> target with no matching changed trace target is reported as unattributed. Routine <code>Ran</code> jobs remain in the event list but are not classified as unexplained compilation.</li>
-            <li>Build causality uses exact changed project-source paths as seeds. Reverse imports provide a potential project impact, while Lake's verbose <code>Built</code> events provide the observed rebuilt modules. Neither list is inferred from the other.</li>
-            <li>The source graph does not include Lake facets, custom <code>needs</code>, plugins, generated targets, external package internals, or the complete Lake job DAG.</li>
-            <li>Build event times come from Lake's verbose lines. End-to-end elapsed time includes the complete delegated process; neither value attributes time to tactics or functions.</li>
-            <li>Declaration and trust inspection need built <code>.ilean</code> metadata. Stale duplicate declaration entries are rejected with a clean-and-rebuild instruction.</li>
-            <li>Trust inspection scans declarations owned by the root project. Imported packages still appear in transitive axiom closures, but their declarations are not listed as project findings.</li>
-            <li>An empty axiom list is one useful kernel-level fact. It is not a review of theorem statements, native code, foreign libraries, or the Lean kernel itself.</li>
+            <li>The first line counts Lake's job labels from its verbose output: <code>Built</code>, <code>Fetched</code>, <code>Unpacked</code>, <code>Replayed</code>, <code>Reused</code> and <code>Ran</code>.</li>
+            <li><code>causes</code> counts modules per kind of changed input: <code>source</code>, <code>import</code>, <code>dependency</code>, <code>libraries</code>, <code>toolchain</code>, <code>options</code>, <code>configuration</code> or <code>other</code>. Lake's own captions decide the kind, so a path that happens to contain "option" is still a source.</li>
+            <li><code>edited</code> lists the modules whose own source changed. <code>unexplained</code> lists modules whose trace changed with no cause lev could name, and <code>removed</code> the traces the build deleted.</li>
+            <li><code>slowest</code> lists up to 20 built modules by Lake's reported time. Lean errors, Lake errors and failed targets follow when the build failed.</li>
           </ul>
         </section>
 
-        <nav class="page-nav" aria-label="Previous and next pages"><a href="profiling-lean.html"><small>Previous</small><strong>Slow files &amp; Lean profiler</strong></a><a href="automation.html"><small>Next</small><strong>Automation</strong></a></nav>
-      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#questions">Command map</a><a href="#diagnosis">Project diagnosis</a><a href="#environment">Environment</a><a href="#dependencies">Dependency pins</a><a href="#build">Build decisions</a><a href="#declaration">Declarations</a><a href="#trust">Trust audit</a><a href="#comparison">Compare methods</a><a href="#policy">CI policy</a><a href="#limits">Limits</a></nav></div></main>
+        <section id="why"><h2>Following one module</h2>
+          <p><code>--why MODULE</code> follows the import causes from <code>MODULE</code> through other rebuilt modules until it reaches one that rebuilt for its own reasons: an edited source, new options, another toolchain. That is the edit to look at. If <code>MODULE</code> did not rebuild in this build, the report says so in a warning.</p>
+          <p>A trace that came from a cache download (<code>lake exe cache get</code> or Lake's own cache) records no inputs. For such a module lev names the imports whose public <code>.olean</code> changed and marks the causes as inferred.</p>
+        </section>
+
+        <section id="json"><h2>JSON report</h2>
+          <p><code>--json</code> prints the envelope <code>{"schema": "lev.cli.inspect.build/v2", "data": ...}</code> on stdout. The data holds <code>project</code>, <code>toolchain</code>, <code>command</code>, <code>status</code>, <code>exit_code</code>, <code>elapsed_ms</code>, the job counts in <code>actions</code>, every job line in <code>events</code>, and per changed module <code>modules[]</code> with <code>module</code>, <code>package</code>, <code>status</code> (<code>changed</code> or <code>new</code>), <code>action</code>, <code>elapsed_ms</code>, <code>causes[]</code> (<code>kind</code>, <code>input</code>) and <code>inferred</code>. Then <code>edited</code>, <code>unexplained</code>, <code>removed</code>, <code>traces_read</code>, <code>root_causes</code>, <code>failed_targets</code>, <code>why</code> (with <code>--why</code>) and <code>warnings</code>.</p>
+        </section>
+
+        <section id="limits"><h2>What it cannot say</h2>
+          <ul>
+            <li>It explains the build it ran. Lake overwrites traces, so a rebuild that already happened cannot be explained afterwards. Run the next build through lev.</li>
+            <li>A trace says which inputs changed, not which declarations changed. <code>lev check</code> works at the declaration level; <code>lev inspect build</code> does not.</li>
+            <li>Only module traces below each package's <code>.lake/build/lib/lean</code> are compared. Facets, executables and custom targets appear in the job counts but are not explained.</li>
+          </ul>
+        </section>
+        <nav class="page-nav" aria-label="Previous and next pages"><a href="getting-started.html"><small>Previous</small><strong>Getting started</strong></a><a href="checking.html"><small>Next</small><strong>Checking</strong></a></nav>
+      </article><nav class="on-this-page" aria-label="On this page"><p>On this page</p><a href="#how">How it works</a><a href="#report">Reading the report</a><a href="#why">Following one module</a><a href="#json">JSON report</a><a href="#limits">What it cannot say</a></nav></div></main>
     </div>
   </body>
 </html>
